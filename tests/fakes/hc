@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""A fake hc: logs each call and answers from $FAKE_STATE."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+state = Path(os.environ["FAKE_STATE"])
+with (state / "hc.log").open("a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\n")
+
+
+def fact(name, default):
+    path = state / name
+    return json.loads(path.read_text()) if path.exists() else default
+
+
+command, args = sys.argv[1], sys.argv[2:]
+if command == "get":
+    print(json.dumps(fact("get.json", {"state": "live", "first_message": {"sent": True}})))
+elif command == "read":
+    print("screen")
+elif command == "wait":
+    print(json.dumps({"ended": False, "reason": "timeout", "turn": 0, "children": []}))
+elif command == "ls":
+    print(json.dumps(fact("ls.json", {"terminals": []})))
+elif command == "send" and (state / "send_fails").exists():
+    print(json.dumps({"error": {"kind": "blocked", "message": "blocked"}}), file=sys.stderr)
+    sys.exit(1)
+else:
+    print("{}")

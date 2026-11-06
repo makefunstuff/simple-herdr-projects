@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""A fake herdr-app: logs each call and makes ids from $FAKE_STATE."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+state = Path(os.environ["FAKE_STATE"])
+with (state / "app.log").open("a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\n")
+
+if (state / "app_fails").exists():
+    print(json.dumps({"error": "no window"}))
+    sys.exit(1)
+if sys.argv[1:3] == ["do", "space.new"]:
+    print(json.dumps({"space": "sp-test", "tab": "tb-test", "terminal": "t9"}))
+else:
+    print("{}")
