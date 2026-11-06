@@ -17,7 +17,7 @@ It keeps the ideas that work (one coordinator per project, tasks with a brief an
 
 ## Status
 
-Early design. See `docs/design.md` once it lands.
+Early design. See [`docs/design.md`](docs/design.md).
 
 ## Credits
 
