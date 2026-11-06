@@ -4,6 +4,7 @@
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 state = Path(os.environ["FAKE_STATE"])
@@ -13,6 +14,8 @@ with (state / "app.log").open("a") as log:
 if (state / "app_fails").exists():
     print(json.dumps({"error": "no window"}))
     sys.exit(1)
+if (state / "app_slow").exists():
+    time.sleep(2)
 if sys.argv[1:3] == ["do", "space.new"]:
     print(json.dumps({"space": "sp-test", "tab": "tb-test", "terminal": "t9"}))
 else:

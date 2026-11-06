@@ -145,6 +145,7 @@ def load_space(name):
     if not path.is_file():
         raise Refuse(f"there is no space {name}")
     head, body = parse(path)
+    check_fields(path, head, SPACE_FIELDS)
     for key in ("folder", "prefix", "base"):
         if not head.get(key):
             raise Refuse(f"{tilde(path)} has no {key}")
@@ -172,12 +173,70 @@ def ensure_store():
         write(STORE / "config.md", render(CONFIG, ""))
 
 
+def a_str(value):
+    return isinstance(value, str)
+
+
+def a_str_or_null(value):
+    return value is None or a_str(value)
+
+
+def a_str_list(value):
+    return isinstance(value, list) and all(a_str(item) for item in value)
+
+
+def a_str_list_or_null(value):
+    return value is None or a_str_list(value)
+
+
+def an_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def an_int_or_null(value):
+    return value is None or an_int(value)
+
+
+def a_progress(value):
+    return value is None or (an_int(value) and 0 <= value <= 100)
+
+
+def an_ask_list(value):
+    return value is None or (isinstance(value, list) and all(isinstance(item, dict) for item in value))
+
+
+def an_argv_list(value):
+    return value is None or (isinstance(value, list) and all(a_str_list(item) for item in value))
+
+
+TASK_FIELDS = {
+    "title": (a_str, "a string"), "branch": (a_str_or_null, "a branch"),
+    "worktree": (a_str_or_null, "a path"), "parent": (a_str_or_null, "a task id"),
+    "after": (a_str_list_or_null, "a list of task ids"), "agent": (a_str_list_or_null, "an argv list"),
+    "asks": (an_ask_list, "a list of asks"), "status": (a_str, "a word"),
+    "progress": (a_progress, "0 to 100"), "step": (a_str_or_null, "a string"),
+    "left": (a_str_or_null, "a string"), "workspace": (a_str_or_null, "an id"),
+}
+SPACE_FIELDS = {
+    "folder": (a_str_or_null, "a path"), "prefix": (a_str_or_null, "letters"),
+    "base": (a_str_or_null, "a branch"), "checks": (an_argv_list, "argv lists"),
+    "next": (an_int_or_null, "a number"),
+}
+
+
+def check_fields(path, head, rules):
+    for key, (fine, what) in rules.items():
+        if key in head and not fine(head[key]):
+            raise Refuse(f"{tilde(path)}: {key} is {what}")
+
+
 def task_path(space, task_id):
     return STORE / "spaces" / space / f"{task_id}.md"
 
 
 def read_task(path):
     head, body = parse(path)
+    check_fields(path, head, TASK_FIELDS)
     task_id = path.stem
     if head.get("id") and head["id"] != task_id:
         raise Refuse(f"{tilde(path)} says id {head['id']}, not {task_id}")
@@ -222,8 +281,7 @@ def initials(name):
     return stem.ljust(2, "X")[:5]
 
 
-def fresh_prefix(name):
-    used = {head.get("prefix") for _, head, _ in spaces()}
+def fresh_prefix(name, used):
     base = initials(name)
     prefix, number = base, 2
     while prefix in used:
@@ -329,7 +387,14 @@ def space_add(args):
         ensure_store()
         if space_path(name).exists():
             raise Refuse(f"space {name} already exists")
-        prefix = (args.prefix or fresh_prefix(name)).upper()
+        used = {head.get("prefix") for _, head, _ in spaces()}
+        if args.prefix:
+            prefix = args.prefix.upper()
+            if prefix in used:
+                raise Refuse(f"prefix {prefix} is used by another space: "
+                             + ", ".join(sorted(prefix for prefix in used if prefix)))
+        else:
+            prefix = fresh_prefix(name, used)
         if not re.fullmatch(r"[A-Z]{2,5}\d*", prefix):
             raise Refuse("--prefix is 2 to 5 letters, and a digit when another space has it")
         head = {"folder": tilde(folder), "prefix": prefix, "base": args.base,
@@ -343,9 +408,15 @@ def task_add(args):
     title = args.title.strip()
     if not title:
         raise Refuse("a task needs a title")
-    agent = json.loads(args.agent) if args.agent else []
-    if not isinstance(agent, list) or not all(isinstance(x, str) for x in agent):
-        raise Refuse('--agent is JSON like ["claude"]')
+    if args.agent:
+        try:
+            agent = json.loads(args.agent)
+        except ValueError:
+            raise Refuse('--agent is JSON like ["claude"]')
+        if not isinstance(agent, list) or not all(isinstance(word, str) for word in agent):
+            raise Refuse('--agent is JSON like ["claude"]')
+    else:
+        agent = []
     brief = read_brief(args.brief)
     with locked():
         ensure_store()
@@ -357,9 +428,8 @@ def task_add(args):
         except (KeyError, TypeError, ValueError):
             raise Refuse(f"{tilde(path)} has no usable next")
         task_id, following = next_id(space_name, head)
-        repo = expand(head["folder"])
         branch = f"task/{task_id.rsplit('-', 1)[1]}-{slug(title)}"
-        worktree = Path("~/.herdr/worktrees").expanduser() / repo.name / branch.replace("/", "-")
+        worktree = Path("~/.herdr/worktrees").expanduser() / space_name / branch.replace("/", "-")
         task = {"id": task_id, "title": title, "status": args.status, "agent": agent,
                 "branch": branch, "worktree": tilde(worktree), "asks": []}
         if args.parent:
@@ -458,8 +528,8 @@ def say(args):
         raise Refuse(f"{args.id} is {task['status']}; a message goes to a working or waiting worker")
     terminal = worker_terminal(args.id)
     if not terminal:
-        raise Refuse(f"{args.id} has no live worker; start it first")
-    done = subprocess.run(["hc", "send", terminal, args.text], capture_output=True, text=True)
+        raise Refuse(f"{args.id} has no live worker; edit its status to todo or queued and start it")
+    done = subprocess.run(["hc", "send", "--", terminal, args.text], capture_output=True, text=True)
     if done.returncode:
         raise Refuse(f"the message did not go in: {one_line(done.stderr or done.stdout)}"
                      f"; {args.id} still needs you")
@@ -483,15 +553,24 @@ def worker_prompt(space_name, task, path):
     )
 
 
+def common_dir(path):
+    text = git("-C", path, "rev-parse", "--git-common-dir").strip()
+    return (Path(path) / text).resolve() if not Path(text).is_absolute() else Path(text).resolve()
+
+
 def make_worktree(space, task):
-    repo = expand(space["folder"])
+    repo = expand(space["folder"]).resolve()
     worktree = expand(task["worktree"])
     branch = task["branch"]
     if worktree.exists():
+        if worktree.resolve() == repo:
+            raise Refuse(f"{task['id']}: its worktree is the repo itself")
         current = git("-C", worktree, "rev-parse", "--abbrev-ref", "HEAD").strip()
-        if current == branch:
-            return
-        raise Refuse(f"{tilde(worktree)} exists on {current}, not {branch}")
+        if current != branch:
+            raise Refuse(f"{tilde(worktree)} exists on {current}, not {branch}")
+        if common_dir(worktree) != common_dir(repo):
+            raise Refuse(f"{tilde(worktree)} belongs to another repo, not {tilde(repo)}")
+        return
     if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
                       capture_output=True).returncode == 0:
         raise Refuse(f"branch {branch} already exists")
@@ -509,7 +588,7 @@ def deliver(terminal, text, task_id):
         hc_json("wait", terminal, "--timeout", "1")
         if hc_json("get", terminal).get("state") != "live":
             break
-        sent = subprocess.run(["hc", "send", terminal, text], capture_output=True, text=True)
+        sent = subprocess.run(["hc", "send", "--", terminal, text], capture_output=True, text=True)
         if sent.returncode == 0:
             return
     why = f" ({first['reason']})" if first and first.get("reason") else ""
@@ -522,39 +601,53 @@ def start(task_id):
         if not task.get(key):
             raise Refuse(f"{tilde(path)} has no {key}")
     if task["status"] not in ("todo", "queued"):
-        raise Refuse(f"{task_id} is {task['status']}; only todo or queued starts")
+        raise Refuse(f"{task_id} is {task['status']}; only todo or queued starts (edit {tilde(path)})")
     live = worker_terminal(task_id)
     if live:
-        raise Refuse(f"{task_id} already has a live worker ({live})")
+        raise Refuse(f"{task_id} already has a live worker ({live}); say to it, or kill it first")
     _, space, _ = load_space(space_name)
-    argv = task.get("agent") or config()["worker"]
-    if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
-        raise Refuse(f"{task_id} has no worker command; set agent or config worker")
-    make_worktree(space, task)
-    prompt = worker_prompt(space_name, task, path)
-    reply = app("space.new", {
-        "name": f"{task_id} · {task['title']}",
-        "folder": str(expand(task["worktree"])),
-        "tab": "Chat",
-        "argv": argv,
-        "task": prompt,
-    })
-    terminal, workspace = reply.get("terminal"), reply.get("space")
-    if not terminal:
-        raise Refuse(f"herdr-app made no terminal for {task_id}")
+    with locked():
+        _, path, task, body = load_task(task_id)
+        if task["status"] not in ("todo", "queued"):
+            raise Refuse(f"{task_id} is {task['status']}; only todo or queued starts (edit {tilde(path)})")
+        previous = task["status"]
+        task["status"] = "working"
+        write(path, render(task, body))
+    terminal = workspace = None
     try:
+        make_worktree(space, task)
+        argv = task.get("agent") or config()["worker"]
+        if not isinstance(argv, list) or not argv or not all(isinstance(word, str) for word in argv):
+            raise Refuse(f"{task_id} has no worker command; set agent or config worker")
+        prompt = worker_prompt(space_name, task, path)
+        reply = app("space.new", {
+            "name": f"{task_id} · {task['title']}",
+            "folder": str(expand(task["worktree"])),
+            "tab": "Chat",
+            "argv": argv,
+            "task": prompt,
+        })
+        terminal, workspace = reply.get("terminal"), reply.get("space")
+        if not terminal:
+            raise Refuse(f"herdr-app made no terminal for {task_id}")
         hc("label", terminal, f"herdr.task={task_id}", "herdr.role=worker")
         deliver(terminal, prompt, task_id)
+        if hc_json("get", terminal).get("state") != "live":
+            raise Refuse(f"{task_id}: the worker exited right after launch")
     except Refuse:
         try:
             if workspace:
                 app("space.close", {"id": workspace, "confirmed": True})
         except Refuse:
             pass
+        with locked():
+            _, path, task, body = load_task(task_id)
+            if task["status"] == "working" and not task.get("asks"):
+                task["status"] = previous
+                write(path, render(task, body))
         raise
     with locked():
         _, path, task, body = load_task(task_id)
-        task["status"] = "working"
         task["workspace"] = workspace
         write(path, render(task, body))
     return task
@@ -586,8 +679,10 @@ def tick(args):
             started.append(task_id)
             slots -= 1
         except Refuse as error:
-            print(f"shp: {error}", file=sys.stderr)
-            errors.append(error)
+            _, _, current, _ = load_task(task_id)
+            if current["status"] == "queued":
+                print(f"shp: {error}", file=sys.stderr)
+                errors.append(error)
     for task_id in started:
         print(task_id)
     return 1 if errors else 0

@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -39,7 +40,7 @@ class ShpTest(unittest.TestCase):
 
     def make_repo(self, name):
         repo = Path(self.temp.name) / name
-        repo.mkdir()
+        repo.mkdir(parents=True)
         self.git("init", "-q", cwd=repo)
         self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=repo)
         (repo / "README.md").write_text("start\n")
@@ -51,6 +52,13 @@ class ShpTest(unittest.TestCase):
     def git(self, *args, cwd):
         return subprocess.run(["git", *args], cwd=cwd, check=True,
                               capture_output=True, text=True).stdout
+
+    def common_dir(self, path):
+        text = self.git("rev-parse", "--git-common-dir", cwd=path).strip()
+        return (Path(path) / text).resolve() if not Path(text).is_absolute() else Path(text).resolve()
+
+    def write_config(self, text):
+        (self.store / "config.md").write_text(text)
 
     def shp(self, *args, stdin=None):
         return subprocess.run([sys.executable, str(SHP), *args], env=self.env,
@@ -139,6 +147,12 @@ class SpaceTest(ShpTest):
         self.assertIn("not a git repo", self.refused("space", "add", "x", "--folder", str(self.repo / "README.md")))
         self.assertIn("git", self.refused("space", "add", "x", "--folder", str(self.repo), "--base", "nope"))
 
+    def test_an_explicit_prefix_cannot_be_reused(self):
+        other = self.make_repo("api")
+        self.make_space("work")
+        said = self.refused("space", "add", "other", "--folder", str(other), "--prefix", "WORK")
+        self.assertIn("prefix WORK is used by another space", said)
+
     def test_config_prints_the_defaults_before_any_store_exists(self):
         self.assertIn("max_running: 4", self.ok("config"))
 
@@ -157,11 +171,22 @@ class AddTest(ShpTest):
         head = self.header(task_id)
         self.assertEqual(head["status"], "todo")
         self.assertEqual(head["branch"], "task/1-add-a-search-box")
-        self.assertEqual(head["worktree"], "~/.herdr/worktrees/app/task-1-add-a-search-box")
+        self.assertEqual(head["worktree"], "~/.herdr/worktrees/work/task-1-add-a-search-box")
         self.assertEqual(head["asks"], [])
         self.assertIn("Put a box on top.", self.ok("show", task_id))
         shown = json.loads(self.ok("list", "--json"))
         self.assertEqual([task["id"] for task in shown], [task_id])
+
+    def test_ids_skip_a_file_that_is_already_there(self):
+        self.make_space()
+        self.assertEqual(self.add_task("First"), "WORK-1")
+        space = self.store / "spaces" / "work.md"
+        space.write_text(space.read_text().replace("next: 2", "next: 1"))
+        self.assertEqual(self.add_task("Second"), "WORK-2")
+
+    def test_an_invalid_agent_is_refused(self):
+        self.make_space()
+        self.assertIn("JSON like", self.refused("add", "X", "--space", "work", "--agent", "claude"))
 
     def test_a_task_may_wait_for_a_parent_and_after(self):
         self.make_space()
@@ -233,6 +258,40 @@ worktree: ~/.herdr/worktrees/app/task-1-broken
         self.assertIn("WORK-1.md", said)
         self.assertIn("branch", said)
 
+    def test_a_malformed_asks_names_its_file(self):
+        self.make_space()
+        self.write_task("WORK-1", """---
+id: WORK-1
+title: Broken
+status: todo
+asks: 5
+---
+""")
+        said = self.refused("list")
+        self.assertIn("WORK-1.md", said)
+        self.assertIn("asks", said)
+
+    def test_a_number_worktree_names_its_file(self):
+        self.make_space()
+        self.write_task("WORK-1", """---
+id: WORK-1
+title: Broken
+status: todo
+branch: task/1-broken
+worktree: 7
+---
+""")
+        said = self.refused("start", "WORK-1")
+        self.assertIn("WORK-1.md", said)
+        self.assertIn("worktree", said)
+
+    def test_a_failed_space_new_leaves_the_task_queued(self):
+        self.make_space()
+        task_id = self.add_task("No window", "--status", "queued")
+        (self.state / "app_fails").write_text("")
+        self.assertIn("no window", self.refused("start", task_id))
+        self.assertEqual(self.header(task_id)["status"], "queued")
+
     def test_a_bad_config_names_its_file(self):
         self.make_space()
         (self.store / "config.md").write_text("---\nmax_running: plenty\n---\n")
@@ -257,6 +316,79 @@ Do the thing.
 
 
 class WorkerTest(ShpTest):
+    def test_a_worktree_on_the_repo_itself_is_refused(self):
+        self.make_space()
+        self.write_task("WORK-1", f"""---
+id: WORK-1
+title: Main checkout
+branch: main
+worktree: {self.repo}
+---
+""")
+        said = self.refused("start", "WORK-1")
+        self.assertIn("worktree is the repo itself", said)
+
+    def test_a_worker_that_exits_right_after_launch_leaves_the_task_queued(self):
+        self.make_space()
+        task_id = self.add_task("Dies at once", "--status", "queued")
+        self.fact("get.json", {"state": "finished", "first_message": {"sent": True}})
+        self.assertIn("exited right after launch", self.refused("start", task_id))
+        self.assertEqual(self.header(task_id)["status"], "queued")
+        self.assertNotIn("workspace", self.header(task_id))
+        self.assertIn(["do", "space.close", json.dumps({"id": "sp-test", "confirmed": True})],
+                      self.calls("app.log"))
+
+    def test_two_spaces_with_the_same_repo_basename_do_not_share_a_worktree(self):
+        one = self.make_repo("one/app")
+        two = self.make_repo("two/app")
+        self.make_space("one", one)
+        self.make_space("two", two)
+        first = self.add_task("Same title", space="one")
+        second = self.add_task("Same title", space="two")
+        self.start_task(first)
+        self.start_task(second)
+        first_tree = self.home / ".herdr/worktrees/one/task-1-same-title"
+        second_tree = self.home / ".herdr/worktrees/two/task-1-same-title"
+        self.assertEqual(self.header(first, "one")["worktree"], "~/.herdr/worktrees/one/task-1-same-title")
+        self.assertEqual(self.header(second, "two")["worktree"], "~/.herdr/worktrees/two/task-1-same-title")
+        self.assertEqual(self.common_dir(first_tree), (one / ".git").resolve())
+        self.assertEqual(self.common_dir(second_tree), (two / ".git").resolve())
+
+    def test_two_ticks_do_not_start_the_same_task_twice(self):
+        self.make_space()
+        self.write_config("---\nworker: [\"pi\"]\nmax_running: 1\n---\n")
+        task_id = self.add_task("Once", "--status", "queued")
+        (self.state / "app_slow").write_text("")
+        first = subprocess.Popen([sys.executable, str(SHP), "tick"], env=self.env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(0.4)
+        second = self.shp("tick")
+        _, first_error = first.communicate(timeout=30)
+        self.assertEqual(first.returncode, 0, first_error)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        launches = [call for call in self.calls("app.log") if call[:2] == ["do", "space.new"]]
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(self.header(task_id)["status"], "working")
+
+    def test_an_ask_during_a_launch_stays_open(self):
+        self.make_space()
+        task_id = self.add_task("Slow start")
+        (self.state / "app_slow").write_text("")
+        starting = subprocess.Popen([sys.executable, str(SHP), "start", task_id], env=self.env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for _ in range(60):
+            if self.header(task_id)["status"] == "working":
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.shp("ask", task_id, "Which colour?").returncode, 0)
+        _, error = starting.communicate(timeout=30)
+        self.assertEqual(starting.returncode, 0, error)
+        head = self.header(task_id)
+        self.assertEqual(head["status"], "needs")
+        self.assertEqual(len(head["asks"]), 1)
+        self.assertEqual(head["workspace"], "sp-test")
+
+
     def test_a_worker_is_launched_labelled_and_reports(self):
         self.make_space()
         task_id = self.add_task("Add a search box", "--agent", '["claude"]')
@@ -267,14 +399,15 @@ class WorkerTest(ShpTest):
         self.assertEqual(args["name"], f"{task_id} · Add a search box")
         self.assertEqual(args["tab"], "Chat")
         self.assertEqual(args["argv"], ["claude"])
-        self.assertEqual(args["folder"], str(self.home / ".herdr/worktrees/app/task-1-add-a-search-box"))
+        self.assertEqual(args["folder"], str(self.home / ".herdr/worktrees/work/task-1-add-a-search-box"))
         task_file = str(self.task_path(task_id)).replace(str(self.home), "~", 1)
         self.assertIn(task_file, args["task"])
+        self.assertFalse([call for call in self.calls("hc.log") if call[0] == "send"])
         self.assertIn(["label", "t9", f"herdr.task={task_id}", "herdr.role=worker"], self.calls("hc.log"))
         head = self.header(task_id)
         self.assertEqual(head["status"], "working")
         self.assertEqual(head["workspace"], "sp-test")
-        worktree = self.home / ".herdr/worktrees/app/task-1-add-a-search-box"
+        worktree = self.home / ".herdr/worktrees/work/task-1-add-a-search-box"
         self.assertEqual(self.git("rev-parse", "--abbrev-ref", "HEAD", cwd=worktree).strip(),
                          "task/1-add-a-search-box")
         self.ok("status", task_id, "--progress", "40", "--step", "Writing the box", "--left", "1h")
@@ -290,15 +423,22 @@ class WorkerTest(ShpTest):
         calls = self.calls("hc.log")
         sends = [call for call in calls if call[0] == "send"]
         self.assertEqual(len(sends), 1)
-        self.assertEqual(sends[0][1], "t9")
+        self.assertEqual(sends[0][1:3], ["--", "t9"])
         task_file = str(self.task_path(task_id)).replace(str(self.home), "~", 1)
-        self.assertIn(task_file, sends[0][2])
+        self.assertIn(task_file, sends[0][3])
         first_send = calls.index(sends[0])
         self.assertTrue(any(call[0] == "read" for call in calls[:first_send]))
         self.assertTrue(any(call[0] == "get" for call in calls[:first_send]))
         self.assertEqual(self.header(task_id)["status"], "working")
 
-    def test_a_worker_that_never_takes_its_task_leaves_the_task_todo(self):
+    def test_a_null_first_message_is_not_resent(self):
+        self.make_space()
+        task_id = self.add_task("Add a search box")
+        self.fact("get.json", {"state": "live", "first_message": None})
+        self.start_task(task_id)
+        self.assertFalse([call for call in self.calls("hc.log") if call[0] == "send"])
+
+    def test_a_worker_that_never_takes_its_task_leaves_the_task_queued(self):
         self.make_space()
         task_id = self.add_task("Add a search box", "--status", "queued")
         self.fact("get.json", {"state": "live", "first_message": {"sent": False, "reason": "timeout"}})
@@ -336,7 +476,7 @@ class AskTest(ShpTest):
         head = self.header(task_id)
         self.assertEqual(head["status"], "working")
         self.assertEqual(head["asks"], [])
-        self.assertIn(["send", "t9", "Use blue"], self.calls("hc.log"))
+        self.assertIn(["send", "--", "t9", "Use blue"], self.calls("hc.log"))
 
     def test_a_send_that_fails_keeps_the_ask_open(self):
         self.make_space()
@@ -376,9 +516,6 @@ class AskTest(ShpTest):
 
 
 class QueueTest(ShpTest):
-    def write_config(self, text):
-        (self.store / "config.md").write_text(text)
-
     def test_slots_cap_running_workers_and_tick_only_starts_queued(self):
         self.make_space()
         self.write_config("---\nworker: [\"pi\"]\nmax_running: 1\n---\n")

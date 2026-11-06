@@ -1,6 +1,6 @@
 # Design: simple-herdr-projects v1
 
-Plain files, herdr-core running the agents, one program, `shp`. A space is a git repo; a task is one Markdown file with its state in the header.
+Plain files, herdr-core for the agents, one program, `shp`. A space is a git repo; a task is one Markdown file with its state in the header.
 
 ## 1. Files
 
@@ -8,12 +8,12 @@ Files in `~/.herdr/simple/`: `config.md`, `spaces/work.md`, `spaces/work/APP-1.m
 
 Config: role argv, `must_fix: major`, `rounds: 3`, `max_running: 4`.
 
-Space `spaces/<name>.md`: `folder`, `prefix`, `base`, `merge` (local/pr), `checks` (argv), `next`; optional `herdr_space`, `coordinator`. Prefix (2–5 initials) stored once, digit if taken; import keeps or appends. The body is the brief.
+Space `spaces/<name>.md`: `folder`, `prefix`, `base`, `merge` (local/pr), `checks` (argv), `next`; optional `herdr_space`, `coordinator` (e.g. `{"argv": ["pi"], "tab": "Assistant"}`). Prefix (2–5 initials) stored once, digit if taken; import keeps or appends. The body is the brief.
 
-A task's header: `id`, `title`, `status`, `agent` (worker argv, empty = config), `branch`, `worktree`; `parent`/`after` (queue), `review`/`reviewed_commit`/`blocking` (rounds), `asks` (needs), optional `summary`/`proof`, `pr`/`merged`, `progress`, `step`, `left`, `workspace`, `imported_key`; an ask is id, text, time. The Markdown below is the brief.
+A task's header: `id`, `title`, `status`, `agent` (worker argv, empty = config), `branch`, `worktree`; `parent`/`after`, `review`/`reviewed_commit`/`blocking`, `asks`, optional `summary`/`proof` (ready; proof is a Herdr artifact id), `pr`/`merged` (accept), `progress`, `step`, `left`, `workspace`, `imported_key`; an ask is id, text, time. The Markdown below is the brief.
 
 - Header: `key: value` in the first `---` pair, lists JSON; missing keys default (`status: todo`, `asks: []`), unknown statuses stay, a bad file names its path.
-- Ids: prefix + `next`, never reused, unique per machine; writers refuse existing paths. Paths `~`.
+- Ids: prefix + `next`, never reused, unique per machine; writers refuse existing paths. Paths use `~`; no machine names.
 - Writes: one `flock` + rename; never empty.
 
 ## 2. States
@@ -28,13 +28,11 @@ Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status
 
 ## 3. CLI
 
-`shp`: one stdlib-only Python 3 file over `hc` and `herdr-app`. Commands are the role lists above plus `space add`, `list`, `show`, `ready --summary/--proof`, `import`, `config`. `list` shows id, status, title, progress and step or asks.
+`shp`: one stdlib-only Python 3 file over `hc` and `herdr-app`. Commands are the role lists above plus `space add`, `list`, `show`, `tick`, `ready --summary/--proof`, `import`, `config`. `list` shows id, status, title, progress and step or asks.
 
 `--json` uses header keys. Exit 0 done, 1 refused (why on stderr), 2 bad usage; refusals say what would move them. `accept` confirms unless `--yes`; board and phone confirm first. `config` prints the file.
 
 ## 4. Agents
-
-Agents are labelled `hc` terminals.
 
 - **Worker.** `start` makes the worktree and workspace with `space.new --folder <worktree> --tab Chat --argv <agent> --task "<rules and task path>"`, takes the terminal id, labels `herdr.task=APP-1`, `herdr.role=worker`. A false `first_message.sent` is read and retried, never blind-resent. `say` finds it by those labels or `imported_key`.
 - **Coordinator.** One per space: tab "Assistant", label `herdr.role=coordinator`, argv from space else config; first message points at the space file; `space add --coordinator` or `start` runs it.
@@ -43,15 +41,15 @@ Agents are labelled `hc` terminals.
 
 ## 5. Review and merge
 
-Worker commits, then `review`, refused at `rounds` unless a person passes `--again`. Reviewer gets the task, `git diff <base>...HEAD`, checks, the read-only reviewer template and a prompt to write `/tmp/shp-review-<id>-<n>.md` with findings by level. `review` waits, copies the report beside the task, sets `review`, `reviewed_commit` (its launch HEAD) and `blocking` (findings at or above `must_fix`); later commits make the round stale. No header, no round; `reviewed --report` records one.
+Worker commits, then `review`, refused at `rounds` unless a person passes `--again`. Reviewer gets the task, `git diff <base>...HEAD`, checks, the read-only `~/.config/herdr-core/templates/reviewer.md` and a prompt to write `/tmp/shp-review-<id>-<n>.md` with `blocker`/`major`/`minor` counts and findings. `review` waits, copies the report beside the task, sets `review`, `reviewed_commit` (its launch HEAD) and `blocking` (findings at or above `must_fix`); later commits make the round stale. No header, no round; `reviewed --report` records one.
 
-`ready` refuses with no round, a moved HEAD or `blocking` above 0. At the limit the worker asks the person; the Review tab keeps that report until the next round.
+`ready` refuses with no round, a moved HEAD or `blocking` above 0. At the limit the worker asks the person; its first message says only a person passes `--again`. The Review tab keeps that report until the next round.
 
 Accept needs ready, `blocking: 0` and `reviewed_commit` = HEAD; a newer commit returns it to working. Then:
 
 1. `checks` pass and worktree clean, else it stays ready with output.
 2. **Local:** main clean and on `base`, else refuse. `git merge --no-ff`; a conflict aborts, stays ready, names files. Success: done, `merged`, kill terminals, remove worktree/branch (a failed removal keeps them).
-3. **PR:** push, create/reuse the PR (`summary`, `proof`, task ref), set merging; `gh pr merge --auto --squash` where allowed, else tick merges on green. Merged → done; closed/conflicted → ready. One accept per space.
+3. **PR:** push, create/reuse the PR (`summary`, `proof`, task ref), set merging; `gh pr merge --auto --squash` where allowed, else tick merges on green. Merged → done; closed/conflicted → ready. One accept per space; tick merges only an accepted task.
 
 ## 6. Herdr
 
@@ -65,13 +63,13 @@ The app confirms, then runs `list --json`, `show`, `accept --yes`, `say` over SS
 
 ## 8. Import and the switch
 
-Stop Shepherdr's service and units first. `import` reads `~/.herdr/tasks/*.json` without writing, skips `kind: folder`, writes open tasks: `todo`/`queued` as is, `running→working`, `ready→ready`, `done` only with `--all`. Keeps id, title, prompt, branch, worktree, `agent` (`agents[].agent` as argv) or config, rounds from `reviews`. Rewrites `after`/`after_ext` to imported ids; unresolved ones import as `todo` with why in `step`. Records `imported_key`, raises `next`, puts attention in `step`, not a need. A ready task takes `reviewed_commit` from the last `reviews[].head`; without one or with another HEAD it imports as `working`.
+Stop Shepherdr first. `import` reads `~/.herdr/tasks/*.json` without writing, skips `kind: folder`, writes open tasks: `todo`/`queued` as is, `running→working`, `ready→ready`, `done` only with `--all`. Keeps id, title, prompt, branch, worktree, `agent` (`agents[].agent` as argv) or config, rounds from `reviews`. Rewrites `after`/`after_ext` to imported ids; unresolved ones import as `todo` with why in `step`. Records `imported_key`, raises `next`, puts attention in `step`, not a need. A ready task takes `reviewed_commit` from the last `reviews[].head`; without one or with another HEAD it imports as `working`.
 
-A live old worker is adopted by its `herdr.task` label, found by `imported_key`; a person can `review`/`ready` for it. If Shepherdr restarts, `start` refuses a key with a live terminal. Old agents keep running; the old store stays read-only; mods and hooks go after the last task.
+A live old worker is adopted by `herdr.task` and found by `imported_key`; a person can `review`/`ready` for it. If Shepherdr restarts, `start` refuses a key with a live terminal. Old agents keep running; the old store stays read-only; mods and hooks go after the last task.
 
 ## 9. Not in v1
 
-Web app, voice, add-ons, settings, proof store, sync, remote `--on`, non-repo spaces, installer, archive, pinning, done folding, guessed progress, automations, push.
+Web app, voice, add-ons, settings, proof store, sync, remote `--on`, non-repo spaces, installer, archive, automations, push.
 
 ## 10. Build
 
