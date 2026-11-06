@@ -24,7 +24,15 @@ elif command == "read":
 elif command == "wait":
     print(json.dumps({"ended": False, "reason": "timeout", "turn": 0, "children": []}))
 elif command == "ls":
-    print(json.dumps(fact("ls.json", {"terminals": []})))
+    wanted = {}
+    for index, arg in enumerate(args):
+        if arg == "--label" and index + 1 < len(args):
+            key, _, value = args[index + 1].partition("=")
+            wanted[key] = value
+    terminals = [terminal for terminal in fact("ls.json", {"terminals": []})["terminals"]
+                 if all(terminal.get("labels", {}).get(key) == value for key, value in wanted.items())]
+    print(json.dumps({"terminals": [{key: terminal[key] for key in ("address", "state", "agent", "cwd", "where")
+                                     if key in terminal} for terminal in terminals]}))
 elif command == "send" and (state / "send_fails").exists():
     print(json.dumps({"error": {"kind": "blocked", "message": "blocked"}}), file=sys.stderr)
     sys.exit(1)

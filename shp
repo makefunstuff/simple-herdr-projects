@@ -433,11 +433,12 @@ def ask(args):
 
 
 def worker_terminal(task_id):
-    alive = [terminal for terminal in hc_json("ls").get("terminals", [])
-             if terminal.get("state") == "live" and terminal.get("address")
-             and terminal.get("labels", {}).get("herdr.role") == "worker"
-             and terminal.get("labels", {}).get("herdr.task") == task_id]
-    return max(alive, key=lambda terminal: terminal.get("created_ms", 0))["address"] if alive else None
+    found = hc_json("ls", "--label", "herdr.role=worker", "--label", f"herdr.task={task_id}")
+    alive = [terminal["address"] for terminal in found.get("terminals", [])
+             if terminal.get("state") == "live" and terminal.get("address")]
+    if len(alive) > 1:
+        raise Refuse(f"{task_id} has {len(alive)} live workers: {', '.join(alive)}")
+    return alive[0] if alive else None
 
 
 def say(args):
