@@ -155,3 +155,11 @@ Six tasks, in order; done is:
 | Automations and Autopilot | A cron line later. |
 | Archive, pinning, done folding, guessed progress | A status and a flag. |
 | Multi-machine sync, Shepherdr's remote `--on`, voice, add-ons, browser relay | Herdr runs terminals and a browser there. |
+
+## Open questions
+
+- The Review tab: keep it after a round, showing the report, or close it?
+- A slow or blocked reviewer: should `shp review` wait and keep it, not fail and close it?
+- A commit made during a round: record the launch HEAD and refuse a moved HEAD?
+- Reopening a done task that kept work in its worktree: reuse it, or start a fresh one?
+- The doc is 1,800 words including headers and code; trim it after you approve?
