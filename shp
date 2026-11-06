@@ -30,6 +30,10 @@ class Refuse(Exception):
     """A command that won't do what was asked, with the reason."""
 
 
+class NoSlot(Refuse):
+    """The queue is full; a queued task waits."""
+
+
 def tilde(path):
     home = str(Path.home())
     text = str(path)
@@ -202,7 +206,9 @@ def a_progress(value):
 
 
 def an_ask_list(value):
-    return value is None or (isinstance(value, list) and all(isinstance(item, dict) for item in value))
+    return value is None or (isinstance(value, list) and all(
+        isinstance(item, dict) and all(a_str(item.get(key)) for key in ("id", "text", "time"))
+        for item in value))
 
 
 def an_argv_list(value):
@@ -213,7 +219,7 @@ TASK_FIELDS = {
     "title": (a_str, "a string"), "branch": (a_str_or_null, "a branch"),
     "worktree": (a_str_or_null, "a path"), "parent": (a_str_or_null, "a task id"),
     "after": (a_str_list_or_null, "a list of task ids"), "agent": (a_str_list_or_null, "an argv list"),
-    "asks": (an_ask_list, "a list of asks"), "status": (a_str, "a word"),
+    "asks": (an_ask_list, "a list of id, text and time"), "status": (a_str, "a word"),
     "progress": (a_progress, "0 to 100"), "step": (a_str_or_null, "a string"),
     "left": (a_str_or_null, "a string"), "workspace": (a_str_or_null, "an id"),
 }
@@ -396,7 +402,7 @@ def space_add(args):
         else:
             prefix = fresh_prefix(name, used)
         if not re.fullmatch(r"[A-Z]{2,5}\d*", prefix):
-            raise Refuse("--prefix is 2 to 5 letters, and a digit when another space has it")
+            raise Refuse("--prefix is 2 to 5 letters")
         head = {"folder": tilde(folder), "prefix": prefix, "base": args.base,
                 "merge": args.merge, "checks": checks, "next": 1}
         write(space_path(name), render(head, brief))
@@ -595,7 +601,7 @@ def deliver(terminal, text, task_id):
     raise Refuse(f"{task_id}: the worker's first message was not sent{why}")
 
 
-def start(task_id):
+def start(task_id, queued=False):
     space_name, path, task, _ = load_task(task_id)
     for key in ("title", "branch", "worktree"):
         if not task.get(key):
@@ -610,6 +616,10 @@ def start(task_id):
         _, path, task, body = load_task(task_id)
         if task["status"] not in ("todo", "queued"):
             raise Refuse(f"{task_id} is {task['status']}; only todo or queued starts (edit {tilde(path)})")
+        if queued:
+            running = sum(1 for held in all_tasks()[0] if held[3].get("status") in HOLDING)
+            if running >= int(config()["max_running"]):
+                raise NoSlot(f"{task_id} waits: max_running is {config()['max_running']}")
         previous = task["status"]
         task["status"] = "working"
         write(path, render(task, body))
@@ -634,7 +644,7 @@ def start(task_id):
         deliver(terminal, prompt, task_id)
         if hc_json("get", terminal).get("state") != "live":
             raise Refuse(f"{task_id}: the worker exited right after launch")
-    except Refuse:
+    except BaseException:
         try:
             if workspace:
                 app("space.close", {"id": workspace, "confirmed": True})
@@ -663,21 +673,20 @@ def gates_clear(task, by_id):
 
 
 def tick(args):
+    config()  # a bad config names its file before tick does anything
     tasks, errors = all_tasks()
     for error in errors:
         print(f"shp: {error}", file=sys.stderr)
-    slots = int(config()["max_running"]) - sum(1 for task in tasks if task[3].get("status") in HOLDING)
     by_id = {task[1]: task[3] for task in tasks}
     started = []
     for _, task_id, _, task, _ in tasks:
-        if slots <= 0:
-            break
         if task.get("status") != "queued" or not gates_clear(task, by_id):
             continue
         try:
-            start(task_id)
+            start(task_id, queued=True)
             started.append(task_id)
-            slots -= 1
+        except NoSlot:
+            break
         except Refuse as error:
             _, _, current, _ = load_task(task_id)
             if current["status"] == "queued":

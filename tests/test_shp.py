@@ -258,6 +258,19 @@ worktree: ~/.herdr/worktrees/app/task-1-broken
         self.assertIn("WORK-1.md", said)
         self.assertIn("branch", said)
 
+    def test_an_ask_without_its_words_names_its_file(self):
+        self.make_space()
+        self.write_task("WORK-1", """---
+id: WORK-1
+title: Broken
+status: needs
+asks: [{"text": "Which colour?"}]
+---
+""")
+        said = self.refused("list")
+        self.assertIn("WORK-1.md", said)
+        self.assertIn("asks is a list of id, text and time", said)
+
     def test_a_malformed_asks_names_its_file(self):
         self.make_space()
         self.write_task("WORK-1", """---
@@ -328,6 +341,21 @@ worktree: {self.repo}
         said = self.refused("start", "WORK-1")
         self.assertIn("worktree is the repo itself", said)
 
+    def test_a_worktree_from_another_repo_is_refused(self):
+        self.make_space()
+        other = self.make_repo("other")
+        elsewhere = Path(self.temp.name) / "shared-wt"
+        self.git("worktree", "add", "-b", "task/1-other", str(elsewhere), cwd=other)
+        self.write_task("WORK-1", f"""---
+id: WORK-1
+title: Elsewhere
+branch: task/1-other
+worktree: {elsewhere}
+---
+""")
+        said = self.refused("start", "WORK-1")
+        self.assertIn("belongs to another repo", said)
+
     def test_a_worker_that_exits_right_after_launch_leaves_the_task_queued(self):
         self.make_space()
         task_id = self.add_task("Dies at once", "--status", "queued")
@@ -369,6 +397,24 @@ worktree: {self.repo}
         launches = [call for call in self.calls("app.log") if call[:2] == ["do", "space.new"]]
         self.assertEqual(len(launches), 1)
         self.assertEqual(self.header(task_id)["status"], "working")
+
+    def test_two_overlapping_ticks_stay_within_max_running(self):
+        self.make_space()
+        self.write_config("---\nworker: [\"pi\"]\nmax_running: 2\n---\n")
+        tasks = [self.add_task(f"Queued {number}", "--status", "queued") for number in range(3)]
+        (self.state / "app_slow").write_text("")
+        first = subprocess.Popen([sys.executable, str(SHP), "tick"], env=self.env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(0.4)
+        second = self.shp("tick")
+        _, first_error = first.communicate(timeout=30)
+        self.assertEqual(first.returncode, 0, first_error)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        launches = [call for call in self.calls("app.log") if call[:2] == ["do", "space.new"]]
+        self.assertEqual(len(launches), 2)
+        statuses = [self.header(task_id)["status"] for task_id in tasks]
+        self.assertEqual(statuses.count("working"), 2)
+        self.assertEqual(statuses.count("queued"), 1)
 
     def test_an_ask_during_a_launch_stays_open(self):
         self.make_space()
