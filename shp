@@ -156,7 +156,15 @@ def config():
     if not path.is_file():
         return dict(CONFIG)
     head, _ = parse(path)
-    return {**CONFIG, **head}
+    data = {**CONFIG, **head}
+    for role in ("coordinator", "worker", "reviewer"):
+        argv = data.get(role)
+        if not isinstance(argv, list) or not argv or not all(isinstance(word, str) for word in argv):
+            raise Refuse(f"{tilde(path)}: {role} is an argv list")
+    for key in ("max_running", "rounds"):
+        if not isinstance(data[key], int) or isinstance(data[key], bool):
+            raise Refuse(f"{tilde(path)}: {key} is a number")
+    return data
 
 
 def ensure_store():
@@ -509,6 +517,9 @@ def deliver(terminal, text, task_id):
 
 def start(task_id):
     space_name, path, task, _ = load_task(task_id)
+    for key in ("title", "branch", "worktree"):
+        if not task.get(key):
+            raise Refuse(f"{tilde(path)} has no {key}")
     if task["status"] not in ("todo", "queued"):
         raise Refuse(f"{task_id} is {task['status']}; only todo or queued starts")
     live = worker_terminal(task_id)

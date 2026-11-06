@@ -221,6 +221,25 @@ Brief.
         self.assertIn("status: parked", text)
         self.assertIn("custom: 7", text)
 
+    def test_a_task_without_a_branch_names_its_file(self):
+        self.make_space()
+        self.write_task("WORK-1", """---
+id: WORK-1
+title: Broken
+worktree: ~/.herdr/worktrees/app/task-1-broken
+---
+""")
+        said = self.refused("start", "WORK-1")
+        self.assertIn("WORK-1.md", said)
+        self.assertIn("branch", said)
+
+    def test_a_bad_config_names_its_file(self):
+        self.make_space()
+        (self.store / "config.md").write_text("---\nmax_running: plenty\n---\n")
+        said = self.refused("tick")
+        self.assertIn("config.md", said)
+        self.assertIn("max_running", said)
+
     def test_a_file_missing_status_is_todo_and_runs(self):
         self.make_space()
         self.write_task("WORK-7", """---
