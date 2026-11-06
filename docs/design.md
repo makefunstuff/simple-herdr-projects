@@ -1,19 +1,12 @@
 # Design: simple-herdr-projects v1
 
-Plain files, herdr-core running the agents, and one program, `shp`. A space is a folder; a task is one Markdown file whose header holds its state.
+Plain files, herdr-core running the agents, and one program, `shp`. A space is a git repo; a task is one Markdown file with its state in the header.
 
 ## 1. Files
 
-Files live in `~/.herdr/simple/`:
+Files live in `~/.herdr/simple/`: `config.md`, `spaces/work.md`, `spaces/work/APP-1.md`, and a report beside it as `APP-1.review-1.md`.
 
-```
-config.md
-spaces/work.md
-spaces/work/APP-1.md
-spaces/work/APP-1.review-1.md
-```
-
-**Config**, the argv per role and defaults:
+**Config**, argv per role:
 
 ```
 ---
@@ -26,7 +19,7 @@ max_running: 4
 ---
 ```
 
-**A space** is `spaces/<name>.md`; the file's name is the space's:
+**A space** is `spaces/<name>.md`:
 
 ```
 ---
@@ -34,16 +27,17 @@ folder: ~/work/app
 prefix: APP
 base: main
 merge: local
-checks: ["make", "check"]
+checks: [["make", "check"]]
 next: 2
-coordinator: {"argv": ["pi"], "terminal": "t12", "tab": "Assistant"}
+herdr_space: sp-abc123
+coordinator: {"argv": ["pi"], "tab": "Assistant"}
 ---
 Standing notes for the coordinator, if any.
 ```
 
-`merge` is `local` or `pr`; `checks` may be empty; the body is the coordinator's brief. A space that isn't a repo has no worktree: its workers work in the folder.
+`merge` is `local` or `pr`; `checks` is a list of argv. The prefix is derived once from the name (initials, 2–5 letters) and stored; import keeps the old one, or appends a digit if taken. A space's `coordinator` argv beats config; the body is its brief. Spaces are git repos; non-repos are not v1.
 
-**A task** is one Markdown file with a small header:
+**A task** is one Markdown file:
 
 ```
 ---
@@ -55,127 +49,117 @@ branch: task/1-add-a-search-box
 worktree: ~/.herdr/worktrees/app/task-1-add-a-search-box
 parent: null
 review: 0
-must_fix: 0
+reviewed_commit: null
+blocking: 0
 progress: 40
 step: Writing the box
 left: 1h
 asks: []
-workspace: sp-abc123
+workspace: sp-def456
 ---
 The brief, in Markdown. The worker reads the whole file.
 ```
 
-- Header: `key: value` lines between the first `---` pair, lists and objects as JSON. Missing keys default (`status: todo`, `asks: []`, `review: 0`), an unknown status reads `todo`, unknown keys survive, and a bad file is never rewritten.
-- Ids are `PREFIX-N`: the prefix from the space name (initials up to 5, else a word's first 4, at least 2), the number from `next`, never reused. Ids are unique per machine, so a taken prefix gets a digit.
-- Paths use `~`; no machine names. Writes take one `flock` and rename into place; a reader that can't parse keeps its last good copy, never an empty one.
+`ready` adds `summary` and `proof`; accept adds `pr` and `merged`; all optional. An ask is `{"id": 1, "text": "Which columns?", "at": "2026-11-06T10:00"}`.
+
+- Header: `key: value` lines between the first `---` pair, lists and objects as JSON. Missing keys default (`status: todo`, `asks: []`); an unknown status is shown, never rewritten; a bad file is an error naming its path.
+- Ids: stored prefix plus `next`, never reused, unique per machine. Paths use `~`; no machine names.
+- Writes use one `flock` and rename; an unreadable file keeps its last good copy, never an empty one.
 
 ## 2. States
 
-| Key | Word | Moves to | Who moves it |
+| Key | Word | Moves to | Who |
 |---|---|---|---|
-| `todo` | To do | `queued` or `working` | person or coordinator, via `shp start` |
-| `queued` | Queued | `working` when a slot or its parent frees | `shp tick` |
-| `working` | Working | `needs` by ask; `ready` by ready; `done` by done | worker, person |
-| `needs` | Needs you | `working` when the answer is delivered | `shp`, on hc's confirmation |
+| `todo` | To do | `queued` or `working` | person, coordinator: `shp start` |
+| `queued` | Queued | `working` when a slot or parent frees | `shp tick` |
+| `working` | Working | `needs` by ask; `ready` by ready | worker |
+| `needs` | Needs you | `working` once delivered | `shp` |
 | `ready` | Ready | `merging`/`done` by accept; `working` by reopen | person |
-| `merging` | Merging | `done`; back to `ready` if it can't merge | `shp tick` |
+| `merging` | Merging | `done`; `ready` if it can't merge | `shp tick` |
 | `done` | Done | `working` by reopen | person |
 
-- **Needs you only on an explicit ask.** Silence, idle or blocked never moves a task; Herdr's blocked dot stays Herdr's.
-- **Delivered means herdr-core said so.** A message counts only when `hc send` exits 0 for a live terminal; a failed send leaves the ask open and prints why. The ask closes on delivery, not on the click.
-- Only `shp` writes a status. Each agent gets one verb; the person gets accept, reopen and done. Reopening a merged task starts `<old>-2` from base.
+- **Needs you only on an explicit ask.** Silence, idle, blocked or a merge problem never moves a task; Herdr's blocked dot stays Herdr's. Only `shp say` closes it; typing in the terminal does not.
+- **Delivered means herdr-core said so.** `hc send` must exit 0 for a live terminal; a failure leaves the ask open and says why.
+- Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status`; person: `say`, `start`, `accept`, `reopen`, `done`, `--again`, and `done` from any open state. Nothing else moves a task. Reopen keeps the id and starts `<branch>-2` from base.
 
 ## 3. CLI
 
-`shp`: one Python 3 file, stdlib only, using `hc` and `herdr-app`. One line per task; `--json` uses the header's keys.
+`shp`: one Python 3 file, stdlib only, using `hc` and `herdr-app`. One line per task:
 
 ```
 APP-1  Working    Add a search box  40%  Writing the box  1h
 ```
 
-- `shp space add`, `shp add`
-- `shp list`, `shp show`
-- `shp start`, `shp tick`
-- `shp status`, `shp ask`, `shp say`
+- `shp space add`, `shp add`, `shp list`, `shp show`
+- `shp start`, `shp tick`, `shp status`, `shp ask`, `shp say`
 - `shp ready`, `shp review`, `shp reviewed`
 - `shp accept`, `shp reopen`, `shp done`
 - `shp import`, `shp config`
 
-Exit 0 is done, 1 refused (why on stderr), 2 bad usage; a refusal prints the state and what would move it.
+`--json` uses the header's keys. Exit 0 is done, 1 refused (why on stderr), 2 bad usage; a refusal prints the state and what would move it. `shp say <id> "<text>"` sends to the worker with `hc send` and closes an open ask only on success. `shp accept` asks for confirmation unless `--yes`; board and phone confirm first.
 
 ## 4. Agents
 
 Workers, coordinator and reviewers are ordinary labelled `hc` terminals.
 
-- **Worker.** `shp start` makes the worktree, the workspace and the Chat tab running the worker argv (a task's `agent` wins), labels it `herdr.task=APP-1`, `herdr.role=worker`, `herdr.space=<space>`, then sends the task path and the three verbs. The send decides whether it started.
-- **Coordinator.** One per space, tab "Assistant", label `herdr.role=coordinator`; `shp space add --coordinator` starts it, `shp start` if there is none.
-- **Reviewer.** Only `shp review` starts it: its own tab "Review" in the worktree, label `herdr.role=reviewer`, name `review-<id>-<round>`. Never headless; the worker waits with `hc wait` and reads the findings.
-- **Queue.** `max_running` workers per machine (default 4); reviewers and coordinators don't count. A child waits for its `parent`. `shp tick` starts the next queued in id order, at every command and every 10 s from the board while Herdr is open; no daemon, so the queue waits when Herdr is closed.
+- **Worker.** `shp start` makes the worktree and workspace, then the Chat tab with `space.new --tab Chat --argv <worker>` (a task's `agent` wins) and `--task "<rules and task path>"`. It checks `first_message.sent` from `hc get`; else it reads and retries, never blind-resends. Labels: `herdr.task=APP-1`, `herdr.role=worker`, `herdr.space=<workspace>`.
+- **Coordinator.** One per space, in its Herdr space, tab "Assistant", label `herdr.role=coordinator`, argv from the space else config; its first message points at the space file. `shp space add --coordinator` starts it; `shp start` if none.
+- **Reviewer.** Only `shp review` starts it: tab "Review" in the worktree, label `herdr.role=reviewer`, name `review-<id>-<round>` lowercased, cut to 32. Never headless; `shp review` waits.
+- **Queue.** `max_running` workers per machine (default 4); reviewers don't count. A child waits for its `parent`. Only `shp start`, `shp tick` and the board's 10 s tick start work; reads never do. No daemon, so the queue waits when Herdr is closed.
 
 ## 5. Review and merge
 
-A worker commits, then runs `shp review`, refused at `rounds` unless a person passes `--again`. The reviewer gets the task file, `git diff <base>...HEAD`, the checks and the shared template (`~/.config/herdr-core/templates/reviewer.md`), and writes `APP-1.review-<n>.md` beside the task:
+A worker commits and runs `shp review`, refused at `rounds` unless a person passes `--again`. The reviewer gets the task, `git diff <base>...HEAD`, the checks, the read-only template (`~/.config/herdr-core/templates/reviewer.md`) and a prompt to write `/tmp/shp-review-<id>-<n>.md` with `blocker`/`major`/`minor` counts and findings. `shp review` waits, copies the report beside the task and sets `review`, `reviewed_commit: HEAD` and `blocking` (findings at or above the config's `must_fix`). No header, no round. `shp reviewed --report` records a hand-started round.
 
-```
----
-blocker: 0
-major: 2
-minor: 3
----
-```
+`shp ready` refuses with no round, with `reviewed_commit` not HEAD, or while `blocking` is above 0. At the limit the worker asks the person; its first message says only a person passes `--again`.
 
-then findings with file, line, proof and level. `shp review` reads the header, sets `review: n` and `must_fix: blocker + major`, and appends the report under `## Review n`. Levels: blocker (loses work or unsafe), major (someone hits it), minor (a nit). No header, no round. `shp ready` refuses while `must_fix` is above 0. Only a person adds a round past the limit; the worker's brief forbids `--again`, though the CLI can't tell who typed it.
+Accept works only from ready with `blocking: 0`:
 
-Accept works only from ready with `must_fix: 0`:
-
-1. Run `checks`; a failure leaves it ready and prints the output.
-2. **Local:** a clean main checkout, then `git merge --no-ff`; a conflict aborts, stays ready and names the files; success is done, `merged`, worktree and branch removed.
-3. **PR:** push and create or reuse the PR (summary, proof id), set merging, `gh pr merge --auto --squash` where allowed, else tick merges on green. Merged → done; closed or conflicted → ready.
-4. One accept per space; a second says which task is merging.
+1. `checks` must pass, the task worktree must be clean, and a failed run leaves it ready with its output. A dirty tree refuses Accept.
+2. **Local:** a clean main checkout, then `git merge --no-ff`. A conflict aborts and stays ready, naming the files. Success sets done and `merged`, kills the terminals, then removes the worktree and branch; a failed removal keeps them and says so.
+3. **PR:** push and create or reuse the PR (`summary`, `proof`, task ref), set merging, `gh pr merge --auto --squash` where allowed, else tick merges on green. Merged → done; closed or conflicted → ready. One accept per space; tick merges only an accepted task.
 
 ## 6. Herdr
 
-- One workspace per started task: folder is the worktree, name `<ID> · <title>`. Herdr shows a worktree under the first space at its checkout, so there is no parent field and no workspace service. It goes when the task is done, after its terminals are unlabelled: Herdr rebuilds a space from a labelled terminal.
-- Tabs: Chat (worker), Terminal (shell), Review (once a round starts), Files, Changes, PR (once there is one). The last three are `herdr-app do tab.new --mod px-files|px-changes|px-pr`; without them a shell tab stands in.
-- Board: one mod, `shp-board`. It reads `shp list --json` every 2 s, shows counts and rows, opens a workspace, accepts a ready task, and toasts once when a task turns needs or ready. Herdr's blocked notification stays Herdr's.
-- No layouts, no sidebar replacement, no installer: the mod is copied in, the layout stays the person's, and `shp` writes only its store plus spaces and tabs through `herdr-app`.
+- `shp space add` ensures the repo's Herdr space and records `herdr_space`. A task's workspace has folder = worktree and name `<ID> · <title>`; Herdr nests a worktree under the first space at its checkout, with no parent field. It goes when done, after its terminals are unlabelled.
+- Tabs: Chat, Terminal, Review (after a round), Files, Changes, PR (once there is one), each `tab.new --space <workspace>`; the last three `--mod px-files|px-changes|px-pr`, or a shell tab without them.
+- Board: one mod, `shp-board`, reading `shp list --json` every 2 s: counts, rows, open a workspace, a confirm before `shp accept --yes`, and one toast per need or ready. Herdr's blocked notification stays Herdr's. No layouts, no sidebar replacement, no installer; `shp` writes only its store, spaces and tabs.
 
 ## 7. Phone
 
-The machine link the app already has is simplest. `shp list --json`, `shp show`, `shp accept`, `shp ask` and `shp say` run over the existing SSH connection (`hc exec --on`, or the app's own exec), and chat is `hc read`/`hc send`; an answered ask is delivered as on the desktop. No server, port, token or service; the cost is a round trip per action, fine for a board. `shp serve` is not v1.
+The app runs `shp list --json`, `show`, `accept --yes` and `say` over its existing SSH connection to the machine; chat is `hc read`/`hc send`. No server, port, token or push in v1: the app polls when opened or foregrounded, and an answer is delivered as on the desktop. The cost is a round trip per action, fine for a board. `shp serve` is not v1, and "remote `--on`" in the drop table means Shepherdr's, not hc's.
 
 ## 8. Import and the switch
 
-`shp import` reads Shepherdr's `~/.herdr/tasks/*.json` without writing to it. For each list it finds or makes the space (from its folder and prefix) and writes files for open tasks: `todo→todo`, `queued→queued`, `running→working` (or `needs` when attention is set, its reason as the ask), `ready→ready`, `done→done` only with `--all`. It keeps id, title, prompt, agent argv, branch, worktree, parent, review rounds and progress, and records `imported: shepherdr`. An existing id is skipped; a live Shepherdr worker is adopted by its `herdr.task` label, never started twice.
+First stop Shepherdr's scheduler, service and their systemd units. `shp import` reads `~/.herdr/tasks/*.json` without writing to it: `todo`/`queued` as they are, `running→working`, `ready→ready`, `done` only with `--all`. It keeps id, title, prompt, agent argv, branch, worktree, `after` (first as `parent`), review and progress, and records `imported_key` (Shepherdr's `<slug>#<n>`). Attention becomes a note in `step`, not a need; a cross-space `after` imports as `todo`.
 
-Side by side, Shepherdr keeps working untouched and new tasks go to `shp`: import once, early, then add only through `shp`, never copy back. When the old tasks are done, the person removes the Shepherdr mods and `task-workspaces.py`.
+A live old worker is adopted by its `herdr.task` label (`imported_key`); if Shepherdr restarts, `shp start` refuses a key with a live terminal. Old agents keep running while new tasks go to `shp`; keep the old store read-only, and remove the mods, hooks and links after the last task.
 
 ## 9. Not in v1
 
-Web app, voice, add-ons, a settings UI, a proof store, multi-machine sync, an installer, archive and pinning, automations. Autopilot may later be a plain schedule.
+Web app, voice, add-ons, settings UI, proof store, multi-machine sync, non-repo spaces, installer, archive, automations, push; Autopilot later as a plain schedule.
 
 ## 10. Build
 
 Six tasks, in order. Each is done when:
 
-1. **Core.** Files, ids, spaces, config, worktrees, every command but import, the lock. Done: a repo task gets a worktree, a labelled worker and its workspace; it reports, asks and reaches ready; all seven states show; old files run.
-2. **Review and merge.** Rounds, the reviewer tab and report, the must-fix gate, local and PR merges, conflicts, tick. Done: a blocker stops ready, round 2 clears it and accepts; a PR merges on green; a conflict stays ready, files named.
-3. **Herdr.** Workspace, tabs, labels, nesting, removal, toasts. Done: a started task has its workspace and tabs under its repo; done removes it and leaves hand-made spaces alone; no layout is written.
-4. **Board.** `shp-board`. Done: `herdr-app check` passes; it lists tasks, opens workspaces, accepts and toasts once per need or ready.
-5. **Phone.** JSON calls over the link. Done: the app lists and accepts over SSH with no new service; an ask clears on hc's confirmation.
-6. **Import.** `shp import`. Done: a dry run names the open tasks; a real run writes files `shp` reads; live old workers are adopted; the old store is unchanged.
+1. **Core.** Files, ids, spaces, config, worktrees, Chat and Terminal, `add/list/show/start/status/ask/say/reopen/done`, queue and lock. Done: a worker runs and reports; an ask closes on a confirmed send; todo, queued, working and needs show; an old file missing `status` runs.
+2. **Review and merge.** `review/reviewed`, `ready`, `accept`, merging, PR, conflicts, tick. Done: a blocker stops ready; an unreviewed HEAD or later commit refuses; round 2 accepts; a dirty tree refuses; a conflict stays ready.
+3. **Herdr.** Repo space, tabs, labels, nesting, safe removal, toasts. Done: a workspace and tabs sit under the repo; done kills terminals first; hand-made spaces stay; no layout is written.
+4. **Board.** Done: `herdr-app check` passes; it lists, opens, confirms, accepts and toasts once per need or ready.
+5. **Phone.** Done: the app lists and accepts over SSH with no new service; an ask clears on hc's confirmation.
+6. **Import.** Done: a dry run names open tasks; a real run writes files `shp` reads; old workers are adopted; the old store is unchanged.
 
 ## What we drop from Shepherdr and why
 
 | Dropped | Why |
 |---|---|
-| Web app | Board and phone cover it; a second UI is the same work twice. |
-| Service, HTTP API, token, port | Files, `shp` and herdr-core's link suffice. |
-| Versioned store and migrations | Headers only gain keys; old files keep working. |
-| Settings window, layouts, installer, sidebar mods | One `config.md`; the person's Herdr and layout; one panel added. |
-| Artifact/proof store | Herdr's artifacts exist; the task keeps the id. |
-| Inferred needs, need kinds, inbox | One explicit ask, never a guess from idle or blocked. |
-| Automations and Autopilot | A cron line later, if ever. |
-| Archive, pinning, Done folding, guessed progress | A status and `shp list --all`; only what `shp status` says. |
-| Multi-machine sync and `--on` | Herdr runs terminals elsewhere; one machine's files. |
-| Voice, add-ons, browser relay | Out of scope; Herdr has a browser. |
+| Web app | Board and phone cover it. |
+| Service, HTTP API, token, port, push | Files and herdr-core's link suffice. |
+| Versioned store and migrations | Headers only gain keys. |
+| Settings window, layouts, installer, sidebar mods | One config; the person's layout. |
+| Artifact/proof store | Herdr's artifacts exist. |
+| Inferred needs, need kinds, inbox | One explicit ask. |
+| Automations and Autopilot | A cron line later. |
+| Archive, pinning, Done folding, guessed progress | A status and a list flag. |
+| Multi-machine sync, remote `--on`, voice, add-ons, browser relay | Herdr runs terminals and a browser there. |
