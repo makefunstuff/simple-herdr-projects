@@ -34,7 +34,7 @@ coordinator: {"argv": ["pi"], "tab": "Assistant"}
 ---
 ```
 
-`merge` is local or pr; `checks` is argv lists. The prefix (initials, 2–5 letters) is derived once and stored; import keeps it or appends a digit. A space's `coordinator` argv beats config; the body is its brief. Spaces are git repos.
+`merge` is local or pr; `checks` is argv lists. The prefix (initials, 2–5) is derived once and stored, with a digit if another space has it; import keeps it or appends one. A space's `coordinator` argv beats config; the body is its brief. Spaces are git repos.
 
 **A task**:
 
@@ -80,8 +80,8 @@ The brief in Markdown.
 | `done` | Done | `working` by reopen | person |
 
 - **Needs you only on an explicit ask.** Silence, idle, blocked or a merge problem never moves a task. An answer closes it only through `shp say` and a successful `hc send`; otherwise it stays open and says why.
-- Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status`; person: `say`, `reviewed`, `start`, `accept`, `reopen`, `done`, `--again`.
-- `shp done` drops an open task (not `merging`), kills its terminals and keeps the worktree and branch. `shp reopen` keeps the id and starts `<branch>-2` from base.
+- Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status`; person: `say`, `review`, `reviewed`, `ready`, `start`, `accept`, `reopen`, `done`, `--again`.
+- `shp done` drops an open task (not `merging`), kills its terminals and keeps its branch and worktree. `shp reopen` from `ready` keeps them, refuses a dirty tree and clears `reviewed_commit`; from `done` it starts `<branch>-2` from base.
 
 ## 3. CLI
 
@@ -97,7 +97,7 @@ Agents are ordinary labelled `hc` terminals.
 
 - **Worker.** `shp start` makes the worktree and workspace with `space.new --folder <worktree> --tab Chat --argv <task agent, else config worker> --task "<rules and task path>"`, takes the terminal id from the reply and labels it `herdr.task=APP-1`, `herdr.role=worker`. If `first_message.sent` is false it reads and retries, never blind-resends. `say` finds it by `herdr.role=worker` and that label, or by `imported_key` for an adopted one.
 - **Coordinator.** One per space, in its Herdr space, tab "Assistant", label `herdr.role=coordinator`, argv from the space else config; its first message points at the space file, and `shp space add --coordinator` or `shp start` runs it.
-- **Reviewer.** Only `shp review` starts it: `tab.new --name Review --space <workspace> --folder <worktree> --argv <reviewer> --task <prompt>`, labelled `herdr.role=reviewer`, `herdr.task=APP-1`; it waits on the terminal id from the reply. Never headless. Its tab closes after the round, so round 2 is fresh.
+- **Reviewer.** Only `shp review` starts it: `tab.new --name Review --space <workspace> --folder <worktree> --argv <reviewer> --task <prompt>`, labelled `herdr.role=reviewer`, `herdr.task=APP-1`. It checks `first_message.sent`, retries after reading, waits on the terminal id from the reply, and closes the tab on failure or after the round. Never headless.
 - **Queue.** `max_running` workers per machine (default 4); reviewers don't count. A child waits for its `parent` and every `after`. Only `shp start`, `shp tick` and the board's 10 s tick start work; reads never do, so the queue waits when Herdr is closed.
 
 ## 5. Review and merge
@@ -115,7 +115,7 @@ Accept works only from ready with `blocking: 0`, and re-checks `reviewed_commit`
 ## 6. Herdr
 
 - `shp space add` ensures the repo's Herdr space and records `herdr_space`. A task's workspace has folder = worktree and name `<ID> · <title>`; Herdr nests a worktree under the first space at its checkout. It goes when done, after unlabelling its terminals.
-- Tabs: Chat, Terminal, Review (after a round), Files, Changes, PR (once there is one), each `tab.new --space <workspace>`; the last three `--mod px-files|px-changes|px-pr`, or a shell tab without them.
+- Tabs: Chat, Terminal, Review (after a round), Files, Changes, PR (once there is one); the last three are `px-files|px-changes|px-pr` mods, or shells.
 - Board: one mod, `shp-board`, reading `shp list --json` every 2 s and calling `shp tick` every 10 s: counts, rows, open a workspace, a confirm before `shp accept --yes`, and one toast per need or ready. No layouts, no sidebar replacement, no installer; `shp` writes only its store, spaces and tabs.
 
 ## 7. Phone
@@ -124,9 +124,9 @@ The app confirms, then runs `shp list --json`, `show`, `accept --yes` and `say` 
 
 ## 8. Import and the switch
 
-First stop Shepherdr's scheduler, service and systemd units. `shp import` reads `~/.herdr/tasks/*.json` without writing to it, skips `kind: folder` stores and writes open tasks: `todo`/`queued` as they are, `running→working`, `ready→ready`, `done` only with `--all`. It keeps id, title, prompt, branch, worktree, `agent` from `agents[].agent` (mapped to argv) or empty for config, and review rounds from `reviews` else 0. It rewrites every `after`/`after_ext` number to the imported `PREFIX-N`; if any is unresolved it imports the task as `todo` and notes why in `step`. It records `imported_key` (Shepherdr's `<slug>#<n>`), raises the space's `next` past the highest imported id, and puts attention in `step`, not a need.
+First stop Shepherdr's scheduler, service and systemd units. `shp import` reads `~/.herdr/tasks/*.json` without writing to it, skips `kind: folder` stores and writes open tasks: `todo`/`queued` as they are, `running→working`, `ready→ready`, `done` only with `--all`. It keeps id, title, prompt, branch, worktree, `agent` from `agents[].agent` (mapped to argv) or empty for config, and review rounds from `reviews` else 0. It rewrites every `after` number and `after_ext` ref to an imported id; if any is unresolved it imports the task as `todo` and notes why in `step`. It records `imported_key` (Shepherdr's `<slug>#<n>`), raises the space's `next` past the highest imported id, and puts attention in `step`, not a need. A ready task takes `reviewed_commit` from the last `reviews[].head`; without one, or with a different HEAD, it imports as `working`.
 
-A live old worker is adopted by its `herdr.task` label and found through `imported_key`; if Shepherdr restarts, `shp start` refuses a key with a live terminal. Old agents keep running; new tasks go to `shp`, the old store stays read-only, and the mods and hooks go after the last task.
+A live old worker is adopted by its `herdr.task` label and found through `imported_key`; the person can run `review` and `ready` for it if its worker won't use shp. If Shepherdr restarts, `shp start` refuses a key with a live terminal. Old agents keep running; new tasks go to `shp`, the old store stays read-only, and the mods and hooks go after the last task.
 
 ## 9. Not in v1
 
@@ -141,7 +141,7 @@ Six tasks, in order; done is:
 3. **Herdr.** Files, Changes and PR tabs, nesting, removal, toasts. Done: the tabs sit under the repo; done kills terminals first; hand-made spaces stay; no layout is written.
 4. **Board.** Done: `herdr-app check ~/.config/herdr-app/mods/shp-board` passes; it lists, opens, confirms, accepts and toasts once per need or ready.
 5. **Phone.** Done: the app confirms, lists and accepts over SSH with no service; an ask clears on hc's confirmation.
-6. **Import.** Done: a dry run names open tasks; a real run writes files `shp` reads; `next` is past them; old workers are adopted; the old store is unchanged.
+6. **Import.** Done: a dry run names open tasks; a real run writes files `shp` reads; `next` is past them; an imported ready task accepts; an adopted worker can finish; the old store is unchanged.
 
 ## What we drop from Shepherdr and why
 
