@@ -14,3 +14,7 @@ The goal is minimal, elegant code with no unnecessary abstractions.
 - Stdlib only, unless the design doc says otherwise.
 - Read the code as a whole before adding to it, and fit what's there rather than layering on top.
 - Reviewers flag unneeded abstraction, indirection or code as a major finding.
+
+## Quality bar
+
+The code has to be good, not just working: idiomatic Go that a senior Go developer would be glad to maintain. Use clear names, early returns and errors wrapped with context. No dead code, no clever tricks, no interfaces without two real implementations. Review with a different model from the one that wrote the code, judging quality as hard as correctness.
