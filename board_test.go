@@ -1,7 +1,7 @@
 package main
 
-// The board's tests: its data rules run under node, and herdr-app checks the mod loads.
-// The panel's clicks need a pointer, so the rules behind them are what these tests hold.
+// The board's tests: its data rules run under node, its handlers run with fake Herdr modules
+// (tests/board-main.mjs), and herdr-app checks the mod loads.
 
 import (
 	"fmt"
@@ -121,6 +121,9 @@ eq(board.tasksOf(null, '[{"id":"A-1"}]')[0].machine, null, "this computer is nul
 let threw = false;
 try { board.tasksOf(null, "{}"); } catch { threw = true; }
 ok(threw, "a listing that is not a list is refused");
+eq(board.linkedMachines('{"machines":[{"name":"mac","target":"mac"},{"name":"sandbox","target":"x","temporary":true}]}'),
+  ["mac"], "linked machines, temporary sandboxes left out");
+eq(board.linkedMachines('{"machines":[]}'), [], "no machines linked");
 `)
 }
 
@@ -148,6 +151,23 @@ eq(board.workspace({ id: "APP-1", title: "Renamed", workspace: "s1" }, spaces).i
 eq(board.workspace({ id: "APP-2", title: "Renamed", machine: "mac", workspace: "s2" }, spaces).id, "mac/s2", "a recorded id on a machine");
 eq(board.workspace({ id: "APP-9", title: "Not started" }, spaces), null, "no space, nothing to open");
 `)
+}
+
+// TestBoardPanel drives the panel's handlers with fake Herdr modules: the confirm step, one
+// accept at a time, refusals, the row's click, and the first read's toasts.
+func TestBoardPanel(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; the board's rules are JavaScript")
+	}
+	mod, err := filepath.Abs("mods/shp-board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, "--import", "./tests/fake/hooks.mjs", "tests/board-main.mjs", mod).CombinedOutput()
+	if err != nil {
+		t.Fatalf("board panel: %v\n%s", err, out)
+	}
 }
 
 func TestBoardModChecks(t *testing.T) {

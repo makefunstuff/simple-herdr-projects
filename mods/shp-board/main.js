@@ -5,8 +5,8 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { machines, spaces, exec, run, notify, openOverlay, closeOverlay, props, theme, shared } from "herdr";
-import { group, detail, subtitle, fresh, workspace, tasksOf, listCall, tickCall, acceptCall } from "./board.js";
+import { hc, spaces, exec, run, notify, openOverlay, closeOverlay, props, theme, shared } from "herdr";
+import { group, detail, subtitle, fresh, workspace, linkedMachines, tasksOf, listCall, tickCall, acceptCall } from "./board.js";
 
 const POLL = 2000;  // how often the tasks are read
 const TICK = 10000; // how often queued work is started
@@ -49,13 +49,19 @@ export default class Board extends View {
     if (this.loading) return;
     this.loading = true;
     cx.spawn(async (cx) => {
-      const linked = machines().map((machine) => machine.name).filter(Boolean);
+      let linked = [];
+      try {
+        const reply = await hc(["machine", "ls", "--json"]);
+        if (reply.code === 0) linked = linkedMachines(reply.stdout);
+      } catch {
+        // no herdr-core answer: this computer's tasks are still worth showing
+      }
       try {
         this.places = await Promise.all([null, ...linked].map((name) => this.load(name)));
         const all = this.places.flatMap((place) => place.tasks);
         const stale = this.places.filter((place) => place.error).map((place) => place.name);
         const news = fresh(this.seen ?? {}, all, stale);
-        if (this.seen) for (const one of news.notices) notify({ title: one.title, body: one.body, level: one.level });
+        for (const one of news.notices) notify({ title: one.title, body: one.body, level: one.level });
         this.seen = news.seen;
       } finally {
         this.loading = false;

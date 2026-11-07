@@ -70,6 +70,13 @@ export function fresh(seen, tasks, stale = []) {
   return { notices, seen: now };
 }
 
+// linkedMachines names every machine herdr-core knows, from `hc machine ls --json`, apart from
+// the temporary sandboxes agents add for themselves.
+export function linkedMachines(text) {
+  const reply = JSON.parse(text);
+  return (reply.machines ?? []).filter((machine) => !machine.temporary).map((machine) => machine.name);
+}
+
 // tasksOf adds the machine a listing came from to each task `shp list --json` returns.
 export function tasksOf(machine, text) {
   const tasks = JSON.parse(text);
