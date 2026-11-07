@@ -8,3 +8,4 @@ build/
 # Herdr writes these into a mod folder when it loads one.
 mods/*/gpui-kit.d.ts
 mods/*/jsconfig.json
+/simple-herdr-projects

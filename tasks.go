@@ -244,8 +244,8 @@ func addCmd(raw []string) error {
 		return refuse("%s has no usable next", tilde(path))
 	}
 	id, following := nextID(spaceName, head.text("prefix"), number)
-	branch := "task/" + id[strings.LastIndex(id, "-")+1:] + "-" + slug(title)
-	worktree := filepath.Join(homeDir(), ".herdr", "worktrees", spaceName, strings.ReplaceAll(branch, "/", "-"))
+	branch := taskBranch(id, title)
+	worktree := worktreeFor(spaceName, branch)
 	fields := []field{
 		{"id", id},
 		{"title", title},
@@ -295,6 +295,16 @@ func agentFlag(a *args) ([]any, error) {
 		return nil, refuse(`--agent is JSON like ["claude"]`)
 	}
 	return words, nil
+}
+
+// taskBranch is the branch a task gets: task/<number>-<its title as a slug>.
+func taskBranch(id, title string) string {
+	return "task/" + id[strings.LastIndex(id, "-")+1:] + "-" + slug(title)
+}
+
+// worktreeFor is where a space checks out a task's branch.
+func worktreeFor(spaceName, branch string) string {
+	return filepath.Join(homeDir(), ".herdr", "worktrees", spaceName, strings.ReplaceAll(branch, "/", "-"))
 }
 
 // nextID finds the first free id at or after number.
