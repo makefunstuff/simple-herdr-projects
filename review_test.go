@@ -160,7 +160,7 @@ func TestReview(t *testing.T) {
 
 		var payload map[string]any
 		for _, call := range f.calls("app.log") {
-			if call[1] == "tab.new" {
+			if len(call) == 3 && call[1] == "tab.new" && strings.Contains(call[2], `"name":"Review"`) {
 				_ = json.Unmarshal([]byte(call[2]), &payload)
 			}
 		}

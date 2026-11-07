@@ -187,7 +187,7 @@ func stillAccepted(t task, reviewed string) error {
 	return nil
 }
 
-// cleanUp ends a merged task's terminals and removes its worktree and branch;
+// cleanUp closes a merged task's space and removes its worktree and branch;
 // whatever will not go is kept and named.
 func cleanUp(t task, repo string) {
 	// A branch on just the reviewed commit is merged, even by a squash git
@@ -197,7 +197,7 @@ func cleanUp(t task, repo string) {
 		strings.TrimSpace(head) == t.head.text("reviewed_commit") {
 		deleteFlag = "-D"
 	}
-	killTerminals(t.id)
+	closeWorkspace(t)
 	worktree := expand(t.head.text("worktree"))
 	if exists(worktree) {
 		if _, err := git("-C", repo, "worktree", "remove", worktree); err != nil {
@@ -240,7 +240,7 @@ func openPR(t task, spaceHead header) error {
 		}
 		url = lastLine(out)
 	}
-	_, err := update(t.id, func(cur *task) error {
+	t, err := update(t.id, func(cur *task) error {
 		if err := stillAccepted(*cur, reviewed); err != nil {
 			return err
 		}
@@ -251,6 +251,7 @@ func openPR(t task, spaceHead header) error {
 	if err != nil {
 		return err
 	}
+	openPRTab(t)
 	if _, _, err := runIn(worktree, "gh", "pr", "merge", "--auto", "--squash", url); err != nil {
 		fmt.Printf("%s: merging through %s; tick merges it once its checks pass\n", t.id, url)
 		return nil
@@ -355,7 +356,7 @@ func doneCmd(raw []string) error {
 		return usage("done takes one task id")
 	}
 	id := a.words[0]
-	_, err = update(id, func(cur *task) error {
+	t, err := update(id, func(cur *task) error {
 		switch status := cur.head.text("status"); status {
 		case "done":
 			return refuse("%s is done already", id)
@@ -368,7 +369,7 @@ func doneCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
-	killTerminals(id)
+	closeWorkspace(t)
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
 	return nil
 }

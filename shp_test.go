@@ -56,6 +56,7 @@ func fakeTool(args []string) int {
 		logName = "app.log"
 	}
 	logCall(filepath.Join(state, logName), rest)
+	logCall(filepath.Join(state, "all.log"), args) // every tool's calls, in order
 	switch name {
 	case "herdr-app":
 		return fakeApp(state, rest)
@@ -144,17 +145,34 @@ func fakeApp(state string, args []string) int {
 		fmt.Println(`{"error": "no window"}`)
 		return 1
 	}
-	if exists(filepath.Join(state, "app_slow")) {
-		time.Sleep(2 * time.Second)
-	}
-	if len(args) >= 3 && args[0] == "do" && args[1] == "tab.new" {
-		return fakeReviewer(state, args[2])
-	}
-	if len(args) >= 2 && args[0] == "do" && args[1] == "space.new" {
-		fmt.Println(`{"space": "sp-test", "tab": "tb-test", "terminal": "t9"}`)
+	if args[0] == "ls" {
+		listed := fact(state, "spaces.json")
+		if listed == nil {
+			listed = map[string]any{"spaces": []any{}}
+		}
+		printJSON(listed)
 		return 0
 	}
-	fmt.Println("{}")
+	if len(args) < 3 || args[0] != "do" {
+		fmt.Println("{}")
+		return 0
+	}
+	switch {
+	case args[1] == "tab.new" && strings.Contains(args[2], `"name":"Review"`):
+		return fakeReviewer(state, args[2])
+	case args[1] == "tab.new" && exists(filepath.Join(state, "tabs_fail")):
+		fmt.Println(`{"error": "no such space"}`)
+		return 1
+	case args[1] == "space.new" && strings.Contains(args[2], `"argv"`):
+		if exists(filepath.Join(state, "app_slow")) {
+			time.Sleep(2 * time.Second)
+		}
+		fmt.Println(`{"space": "sp-test", "tab": "tb-test", "terminal": "t9"}`)
+	case args[1] == "space.new":
+		fmt.Println(`{"space": "sp-repo", "tab": "tb-repo", "terminal": "t1"}`)
+	default:
+		fmt.Println("{}")
+	}
 	return 0
 }
 
@@ -1054,14 +1072,7 @@ worktree: %s
 		f.makeSpace("work")
 		id := f.addTask("Add a search box", "--agent", `["claude"]`)
 		f.ok("start", id)
-		calls := f.calls("app.log")
-		if len(calls) == 0 || calls[0][0] != "do" || calls[0][1] != "space.new" {
-			t.Fatalf("first app call %v", calls)
-		}
-		var args map[string]any
-		if err := json.Unmarshal([]byte(calls[0][2]), &args); err != nil {
-			t.Fatal(err)
-		}
+		args := f.launch()
 		if args["name"] != id+" · Add a search box" {
 			t.Errorf("name %v", args["name"])
 		}
@@ -1364,7 +1375,18 @@ func TestQueue(t *testing.T) {
 // headerIn reads a task header in a named space.
 func (f *fixture) headerIn(space, id string) map[string]any {
 	f.t.Helper()
-	data, err := os.ReadFile(filepath.Join(f.store, "spaces", space, id+".md"))
+	return f.fileHeader(filepath.Join(f.store, "spaces", space, id+".md"))
+}
+
+// spaceHeader reads a space file's header.
+func (f *fixture) spaceHeader(space string) map[string]any {
+	f.t.Helper()
+	return f.fileHeader(filepath.Join(f.store, "spaces", space+".md"))
+}
+
+func (f *fixture) fileHeader(path string) map[string]any {
+	f.t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -1428,12 +1450,33 @@ func hasCall(calls [][]string, want ...string) bool {
 	return false
 }
 
+// isLaunch says a herdr-app call is a worker's space.new, not a repo's.
+func isLaunch(call []string) bool {
+	return len(call) == 3 && call[0] == "do" && call[1] == "space.new" && strings.Contains(call[2], `"argv"`)
+}
+
 func countLaunches(calls [][]string) int {
 	launches := 0
 	for _, call := range calls {
-		if len(call) >= 2 && call[0] == "do" && call[1] == "space.new" {
+		if isLaunch(call) {
 			launches++
 		}
 	}
 	return launches
+}
+
+// launch is the payload of the first worker launch.
+func (f *fixture) launch() map[string]any {
+	f.t.Helper()
+	for _, call := range f.calls("app.log") {
+		if isLaunch(call) {
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(call[2]), &payload); err != nil {
+				f.t.Fatal(err)
+			}
+			return payload
+		}
+	}
+	f.t.Fatalf("no launch in %v", f.calls("app.log"))
+	return nil
 }

@@ -307,6 +307,9 @@ func launch(spaceHead header, t task) (string, error) {
 		}
 		argv = cfg.words("worker") // config refuses an empty worker
 	}
+	if t.head.text("workspace") != "" {
+		closeWorkspace(t) // a restarted task's old space would be left behind
+	}
 	prompt := workerPrompt(t)
 	reply, err := herdrApp("space.new", map[string]any{
 		"name":   t.id + " · " + t.head.text("title"),
@@ -335,6 +338,9 @@ func launch(spaceHead header, t task) (string, error) {
 	}
 	if reply["state"] != "live" {
 		return workspace, refuse("%s: the worker exited right after launch", t.id)
+	}
+	if workspace != "" {
+		openTaskTabs(t, workspace)
 	}
 	return workspace, nil
 }

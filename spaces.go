@@ -220,6 +220,11 @@ func spaceAdd(raw []string) error {
 		{"checks", checks},
 		{"next", json.Number("1")},
 	}}
+	if id, err := repoSpace(name, folder); err != nil {
+		fmt.Fprintf(os.Stderr, "shp: %v; space %s has no Herdr space yet\n", err, name)
+	} else {
+		head.set("herdr_space", id)
+	}
 	if err := writeText(spacePath(name), render(head, brief)); err != nil {
 		return err
 	}
