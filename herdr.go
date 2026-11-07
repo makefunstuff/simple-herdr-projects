@@ -83,7 +83,7 @@ func openTab(workspace, worktree, name, mod string) error {
 	payload := map[string]any{"name": name, "space": workspace}
 	if mod != "" && isFile(filepath.Join(appHome(), "mods", mod, "main.js")) {
 		payload["mod"] = mod
-		payload["props"] = map[string]any{"folder": worktree} // px-pr shows this folder's pull request
+		payload["props"] = map[string]any{"folder": worktree} // px-pr reads it; the others follow the space
 	} else {
 		payload["folder"] = worktree
 	}

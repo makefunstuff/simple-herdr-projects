@@ -373,8 +373,8 @@ func doneCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
-	// Printed first: closing the space may end the shell this runs in.
 	killTerminals(id)
+	// Printed first: closing the space may end the shell this runs in.
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
 	closeSpace(t)
 	return nil
