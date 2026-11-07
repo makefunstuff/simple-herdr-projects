@@ -41,7 +41,7 @@ Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status
 
 ## 5. Review and merge
 
-Worker commits, then `review`, refused at `rounds` unless a person passes `--again`. Reviewer gets the task, `git diff <base>...HEAD`, checks, the read-only `~/.config/herdr-core/templates/reviewer.md` and a prompt to write `/tmp/shp-review-<id>-<n>.md` with `blocker`/`major`/`minor` counts and findings. `review` waits, copies the report beside the task, sets `review`, `reviewed_commit` (its launch HEAD) and `blocking` (findings at or above `must_fix`); later commits make the round stale. No header, no round; `reviewed --report` records one.
+Worker commits, then `review`, refused at `rounds` unless a person passes `--again`. Reviewer gets the task, `git diff <base>...HEAD`, checks, the read-only `templates/reviewer.md` and a prompt to write `/tmp/shp-review-<id>-<n>.md` with `blocker`/`major`/`minor` counts and findings. `review` waits, copies the report beside the task, sets `review`, `reviewed_commit` (its launch HEAD) and `blocking` (findings at or above `must_fix`); later commits make the round stale. No header, no round; `reviewed --report` records one.
 
 `ready` refuses with no round, a moved HEAD or `blocking` above 0. At the limit the worker asks the person; its first message says only a person passes `--again`. The Review tab keeps that report until the next round.
 

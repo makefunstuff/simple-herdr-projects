@@ -67,8 +67,12 @@ func branchExists(repo, branch string) bool {
 
 // workerPrompt is the first message a worker gets.
 func workerPrompt(t task) string {
-	return fmt.Sprintf(workerGuide,
-		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"), tilde(t.path))
+	return fillGuide(guide("worker", workerGuide),
+		"{{id}}", t.id,
+		"{{space}}", t.space,
+		"{{worktree}}", expand(t.head.text("worktree")),
+		"{{branch}}", t.head.text("branch"),
+		"{{task}}", tilde(t.path))
 }
 
 // commonDir is where a checkout's shared git objects live.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 )
 
 // spaceStartCmd starts the Assistant of every space, or of the one named.
@@ -88,7 +89,11 @@ func startCoordinator(name string) error {
 		}
 		argv = cfg.words("coordinator")
 	}
-	prompt := fmt.Sprintf(coordinatorGuide, name, tilde(folder), tilde(path))
+	prompt := guide("assistant", coordinatorGuide)
+	if !strings.Contains(prompt, "{{") {
+		prompt += fmt.Sprintf("\nYour space is %s at %s; its file is %s.\n", name, tilde(folder), tilde(path))
+	}
+	prompt = fillGuide(prompt, "{{space}}", name, "{{folder}}", tilde(folder), "{{file}}", tilde(path))
 	reply, err := herdrApp("tab.new", map[string]any{
 		"name":   "Assistant",
 		"space":  workspace,

@@ -34,7 +34,7 @@ func reviewPrompt(t task, spaceHead header, head, report string) string {
 			"Write your report to %s: first a header of counts,\n"+
 			"---\nblocker: <n>\nmajor: <n>\nminor: <n>\n---\n"+
 			"then each finding with its level, file, line and what to do. Then stop.",
-		t.id, t.head.text("title"), reviewerGuide, tilde(t.path), head, expand(t.head.text("worktree")),
+		t.id, t.head.text("title"), guide("reviewer", reviewerGuide), tilde(t.path), head, expand(t.head.text("worktree")),
 		spaceHead.text("base"), checks, report)
 }
 
