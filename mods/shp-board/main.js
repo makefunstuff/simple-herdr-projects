@@ -35,7 +35,11 @@ export default class Board extends View {
   init(_props, cx) {
     this.busy = false; // accepting
     this.error = null; // why the accept was refused
-    if (props()?.accept) return; // this copy is the confirm dialog, not the board
+    if (props()?.accept) { // this copy is the confirm dialog, not the board
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
     this.places = [{ name: null, tasks: [], error: null }];
     this.seen = null;     // null until the first read: opening the board doesn't replay toasts
     this.loading = false;
@@ -146,18 +150,30 @@ export default class Board extends View {
         .on_click((ev, cx) => { cx.stop_propagation(); this.ask(task); })));
   }
 
-  // The confirm dialog before accepting: the one change that merges and finishes work.
+  // The confirm dialog before accepting, as px-confirm draws it: Enter accepts, Esc cancels.
   confirm(task, t) {
-    const button = (id, label, bg, fg, onClick) => h_flex().id(id).h(28).px(12).items_center().border_1().border_color(bg).bg(bg)
-      .text_color(fg).when(Boolean(onClick), (e) => e.cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick)).child(caps(label));
-    return v_flex().id("shp-board-confirm").size_full().p(16).gap(12).bg(t.popover).text_color(t.foreground).text_size(13)
-      .child(div().text_size(15).font_semibold().child(`Accept ${task.id}?`))
+    const cancel = () => closeOverlay(props().overlay);
+    const yes = (cx) => { if (!this.busy) this.accept(task, cx); };
+    const button = (id, label, bg, fg, onClick) => h_flex().id(id).h(32).px(14).items_center().border_1()
+      .border_color(id === "no" ? t.input : bg).bg(bg).text_color(fg)
+      .when(Boolean(onClick), (e) => e.cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick)).child(caps(label));
+    return v_flex().id("shp-board-confirm").track_focus(this.handle).size_full().min_h(0).p(18).gap(12).bg(t.popover)
+      .text_color(t.foreground).text_size(13)
+      .on_key_down((ev, cx) => {
+        if (ev.key === "enter") yes(cx);
+        else if (ev.key === "escape") cancel();
+        else return;
+        cx.stop_propagation();
+      })
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child(`Accept ${task.id}?`))
+        .child(div().text_size(11).text_color(t.dim).child("Esc")))
       .child(div().flex_1().min_h(0).text_color(t.muted).child(`${task.title} — runs its space's checks, then merges its branch or pull request.`))
       .when(Boolean(this.error), (e) => e.child(div().text_size(11).text_color(t.blocked).child(this.error)))
       .child(h_flex().justify_end().gap(8).text_size(12)
-        .child(button("no", "Cancel", t.raised, t.foreground, () => closeOverlay(props().overlay)))
-        .child(button("yes", this.busy ? "Accepting…" : "Accept", t.accent, t.accent_foreground,
-          this.busy ? null : (ev, cx) => this.accept(task, cx))));
+        .child(button("no", "Cancel", t.raised, t.foreground, cancel))
+        .child(button("yes", this.busy ? "Accepting…" : "Accept", t.solid, t.solid_foreground,
+          this.busy ? null : (ev, cx) => yes(cx))));
   }
 
   render() {

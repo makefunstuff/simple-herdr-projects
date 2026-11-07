@@ -33,6 +33,8 @@ const fakeCx = () => ({
   notify() { this.notified++; },
   spawn(fn) { this.pending.push(Promise.resolve().then(() => fn(this))); },
   timer: { every() {}, after() {} },
+  focus_handle: () => ({ focus() {} }),
+  stop_propagation() {},
 });
 const settle = async (cx) => {
   await Promise.all(cx.pending);
@@ -183,6 +185,18 @@ const idle = startDialog(ready);
 ok(Boolean(find(idle.render(), "yes").calls.on_click?.[0]?.[0]), "the dialog's Accept works while idle");
 idle.busy = true;
 ok(!find(idle.render(), "yes").calls.on_click, "and takes no click while accepting");
+
+// The keyboard works as in px-confirm: Esc cancels, Enter accepts.
+reset();
+const keyed = startDialog(ready);
+const keys = keyed.render().calls.on_key_down[0][0];
+const keyCx = fakeCx();
+keys({ key: "escape" }, keyCx);
+eq(calls.closed, ["ov1"], "Esc closes the dialog");
+eq(calls.exec.length, 0, "and accepts nothing");
+keys({ key: "enter" }, keyCx);
+await settle(keyCx);
+eq(calls.exec.map((c) => c.args), [["accept", "A-1", "--yes"]], "Enter accepts");
 
 if (failed) process.exit(1);
 console.log("board panel handlers hold");
