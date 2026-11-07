@@ -87,6 +87,24 @@ func loadTask(id string) (task, error) {
 	return task{space: filepath.Base(filepath.Dir(path)), id: id, path: path, head: head, body: body}, nil
 }
 
+// update changes a task under the store's lock and saves it; when change
+// refuses, nothing is written.
+func update(id string, change func(t *task) error) (task, error) {
+	unlock, err := lock()
+	if err != nil {
+		return task{}, err
+	}
+	defer unlock()
+	t, err := loadTask(id)
+	if err != nil {
+		return task{}, err
+	}
+	if err := change(&t); err != nil {
+		return task{}, err
+	}
+	return t, writeText(t.path, render(t.head, t.body))
+}
+
 // allTasks reads every task file, with the files that would not read.
 func allTasks() ([]task, []error) {
 	paths, _ := filepath.Glob(filepath.Join(store(), "spaces", "*", "*.md"))

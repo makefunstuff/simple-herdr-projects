@@ -110,8 +110,14 @@ func printJSON(value any) error {
 
 // run runs a program and keeps its output.
 func run(name string, args ...string) (stdout, stderr string, err error) {
+	return runIn("", name, args...)
+}
+
+// runIn runs a program in a folder and keeps its output.
+func runIn(dir, name string, args ...string) (stdout, stderr string, err error) {
 	var out, errOut bytes.Buffer
 	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 	err = cmd.Run()
@@ -263,16 +269,28 @@ func helpText(argv []string) string {
 		return askHelp
 	case "say":
 		return sayHelp
+	case "review":
+		return reviewHelp
+	case "reviewed":
+		return reviewedHelp
+	case "ready":
+		return readyHelp
+	case "accept":
+		return acceptHelp
+	case "reopen":
+		return reopenHelp
+	case "done":
+		return doneHelp
 	}
 	return mainHelp
 }
 
-const mainHelp = `usage: shp [-h] {config,space,add,list,show,start,tick,status,ask,say} ...
+const mainHelp = `usage: shp [-h] {config,space,add,list,show,start,tick,status,ask,say,review,reviewed,ready,accept,reopen,done} ...
 
 Spaces and tasks for coding agents on Herdr.
 
 positional arguments:
-  {config,space,add,list,show,start,tick,status,ask,say}
+  {config,space,add,list,show,start,tick,status,ask,say,review,reviewed,ready,accept,reopen,done}
     config              print the config file
     space               spaces are git repos
     add                 add a task
@@ -283,6 +301,12 @@ positional arguments:
     status              a worker reports its progress
     ask                 a worker asks the person
     say                 send a person's answer to the worker
+    review              have a reviewer review the committed work
+    reviewed            record a review round from a report file
+    ready               the reviewed work is ready to accept
+    accept              check and merge a ready task
+    reopen              send a ready or done task back to work
+    done                drop a task, keeping its branch and worktree
 
 options:
   -h, --help            show this help message and exit
@@ -403,4 +427,63 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --ask ASK   the ask to close; needed when several are open
+`
+
+const reviewHelp = `usage: shp review [-h] [--again] id
+
+positional arguments:
+  id
+
+options:
+  -h, --help  show this help message and exit
+  --again     a person's go for a round past the rounds limit
+`
+
+const reviewedHelp = `usage: shp reviewed [-h] --report REPORT id
+
+positional arguments:
+  id
+
+options:
+  -h, --help       show this help message and exit
+  --report REPORT  a report file with blocker, major and minor counts
+`
+
+const readyHelp = `usage: shp ready [-h] [--summary SUMMARY] [--proof PROOF] id
+
+positional arguments:
+  id
+
+options:
+  -h, --help         show this help message and exit
+  --summary SUMMARY  what the person can now do, in plain words
+  --proof PROOF      the Herdr artifact id of its proof
+`
+
+const acceptHelp = `usage: shp accept [-h] [--yes] id
+
+positional arguments:
+  id
+
+options:
+  -h, --help  show this help message and exit
+  --yes       accept without asking first
+`
+
+const reopenHelp = `usage: shp reopen [-h] id
+
+positional arguments:
+  id
+
+options:
+  -h, --help  show this help message and exit
+`
+
+const doneHelp = `usage: shp done [-h] id
+
+positional arguments:
+  id
+
+options:
+  -h, --help  show this help message and exit
 `

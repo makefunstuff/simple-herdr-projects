@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// fakeTool is the fake hc or herdr-app, chosen by the first argument.
+// fakeTool is the fake hc, herdr-app or gh, chosen by the first argument.
 func fakeTool(args []string) int {
 	for i, arg := range args {
 		if arg == "--" {
@@ -56,8 +56,11 @@ func fakeTool(args []string) int {
 		logName = "app.log"
 	}
 	logCall(filepath.Join(state, logName), rest)
-	if name == "herdr-app" {
+	switch name {
+	case "herdr-app":
 		return fakeApp(state, rest)
+	case "gh":
+		return fakeGH(state, rest)
 	}
 	return fakeHC(state, rest)
 }
@@ -93,6 +96,7 @@ func fakeHC(state string, args []string) int {
 	case "read":
 		fmt.Println("screen")
 	case "wait":
+		writeReport(state)
 		printJSON(map[string]any{"ended": false, "reason": "timeout", "turn": 0, "children": []any{}})
 	case "ls":
 		wanted := map[string]string{}
@@ -143,6 +147,9 @@ func fakeApp(state string, args []string) int {
 	if exists(filepath.Join(state, "app_slow")) {
 		time.Sleep(2 * time.Second)
 	}
+	if len(args) >= 3 && args[0] == "do" && args[1] == "tab.new" {
+		return fakeReviewer(state, args[2])
+	}
 	if len(args) >= 2 && args[0] == "do" && args[1] == "space.new" {
 		fmt.Println(`{"space": "sp-test", "tab": "tb-test", "terminal": "t9"}`)
 		return 0
@@ -179,7 +186,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"hc", "herdr-app"} {
+	for _, name := range []string{"hc", "herdr-app", "gh"} {
 		script := fmt.Sprintf("#!/bin/sh\nexec '%s' -- %s \"$@\"\n", exe, name)
 		if err := os.WriteFile(filepath.Join(f.bin, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
@@ -197,6 +204,9 @@ func newFixture(t *testing.T) *fixture {
 		"PATH="+f.bin+":"+os.Getenv("PATH"),
 		"FAKE_STATE="+f.state,
 		"GO_FAKE_TOOL=1",
+		"TMPDIR="+f.state,
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 	)
 	f.repo = f.makeRepo("app")
 	return f
@@ -451,7 +461,8 @@ func TestSpace(t *testing.T) {
 
 func TestHelp(t *testing.T) {
 	f := newFixture(t)
-	commands := []string{"config", "space", "add", "list", "show", "start", "tick", "status", "ask", "say"}
+	commands := []string{"config", "space", "add", "list", "show", "start", "tick", "status", "ask", "say",
+		"review", "reviewed", "ready", "accept", "reopen", "done"}
 	help := f.ok("--help")
 	for _, command := range commands {
 		if !strings.Contains(help, "\n    "+command+" ") {

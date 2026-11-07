@@ -330,6 +330,9 @@ func config() (header, error) {
 			return cfg, refuse("%s: %s is an argv list", tilde(path), role)
 		}
 	}
+	if !slices.Contains(levels, cfg.text("must_fix")) {
+		return cfg, refuse("%s: must_fix is blocker, major or minor", tilde(path))
+	}
 	for _, key := range []string{"max_running", "rounds"} {
 		if _, ok := cfg.number(key); !ok {
 			return cfg, refuse("%s: %s is a number", tilde(path), key)
@@ -419,6 +422,13 @@ var taskRules = []rule{
 	{"step", isStringOrNil, "a string"},
 	{"left", isStringOrNil, "a string"},
 	{"workspace", isStringOrNil, "an id"},
+	{"review", isIntOrNil, "a number"},
+	{"reviewed_commit", isStringOrNil, "a commit"},
+	{"blocking", isIntOrNil, "a number"},
+	{"summary", isStringOrNil, "a string"},
+	{"proof", isStringOrNil, "an id"},
+	{"pr", isStringOrNil, "a URL"},
+	{"merged", isStringOrNil, "a commit"},
 }
 
 var spaceRules = []rule{

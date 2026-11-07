@@ -53,9 +53,12 @@ func workerPrompt(t task) string {
 			"Work only in %s on branch %s; do not start other agents.\n"+
 			"The task file is %s: its header is the state, the Markdown below is the brief.\n"+
 			"Report with: shp status %s --progress <0-100> --step \"<what you are doing>\" --left <e.g. 20m>\n"+
-			"If you need the person, run: shp ask %s \"<your question>\" and wait for the answer here.",
+			"If you need the person, run: shp ask %s \"<your question>\" and wait for the answer here.\n"+
+			"When your work is committed, run: shp review %s. Fix what a round finds, commit and review again.\n"+
+			"Once a round leaves nothing to fix, run: shp ready %s --summary \"<what the person can now do>\".\n"+
+			"Review refuses past the rounds limit; then ask the person: only a person passes --again.",
 		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"),
-		tilde(t.path), t.id, t.id)
+		tilde(t.path), t.id, t.id, t.id, t.id)
 }
 
 // commonDir is where a checkout's shared git objects live.
@@ -150,7 +153,7 @@ func deliver(terminal, text, id string) error {
 	if reason, _ := first["reason"].(string); reason != "" {
 		why = " (" + reason + ")"
 	}
-	return refuse("%s: the worker's first message was not sent%s", id, why)
+	return refuse("%s: the agent's first message was not sent%s", id, why)
 }
 
 // start makes the worktree and launches the worker; a queued start also takes a slot.
@@ -385,6 +388,7 @@ func tickCmd(raw []string) error {
 	for _, t := range tasks {
 		byID[t.id] = t.head
 	}
+	problems = append(problems, followMerges(tasks)...)
 	var started []string
 	for _, t := range tasks {
 		if t.head.text("status") != "queued" || !gatesClear(t, byID) {
