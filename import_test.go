@@ -102,6 +102,8 @@ func (f *fixture) appProject() (map[string]any, string) {
 				"summary": "Ready to go",
 				"reviews": []any{map[string]any{"round": 1, "text": "Round 1: no findings", "head": readyHead}},
 				"agents":  []any{map[string]any{"address": "t6", "agent": "pi", "ended": 9}}},
+			map[string]any{"id": 6, "title": "Queued work", "prompt": "When there is room.", "mode": "worktree",
+				"state": "queued", "agents": []any{}},
 		},
 	}, runningPath
 }
@@ -159,7 +161,7 @@ func TestImport(t *testing.T) {
 		wantIn(t, out, "APP-3  todo  Next work")
 		wantIn(t, out, "APP-5  ready  Ready work")
 		wantIn(t, out, "OTH-1  todo  Follow up")
-		wantIn(t, out, "1 done (1 of them archived). Next is APP-6.")
+		wantIn(t, out, "1 done (1 of them archived). Next is APP-7.")
 		if strings.Contains(out, "APP-1  done") {
 			t.Errorf("a dry run lists done tasks one by one:\n%s", out)
 		}
@@ -187,7 +189,7 @@ func TestImport(t *testing.T) {
 			"APP-3  todo", "APP-4  todo", "APP-5  ready", "OTH-1  todo", "JPL-1  done  Desktop tweak"} {
 			wantIn(t, list, want)
 		}
-		f.space("my-app", "prefix: APP", "base: main", "merge: local", "next: 6")
+		f.space("my-app", "prefix: APP", "base: main", "merge: local", "next: 7")
 		f.space("other-lib", "prefix: OTH", "merge: pr", "next: 2")
 		home := f.space("home", "prefix: JPL", "folder: ~")
 		if strings.Contains(home, "base:") {
@@ -196,7 +198,10 @@ func TestImport(t *testing.T) {
 		folderTask := f.headerIn("home", "JPL-2")
 		wantField(t, folderTask, "status", "todo")
 		wantIn(t, fmtValue(folderTask["step"]), "its space is a folder")
-		f.ok("tick")
+		wantIn(t, f.ok("tick"), "APP-6")
+		queued := f.headerIn("my-app", "APP-6")
+		wantField(t, queued, "status", "working")
+		wantField(t, queued, "branch", "task/6-queued-work")
 
 		done := f.headerIn("my-app", "APP-1")
 		wantField(t, done, "summary", "It was done")
@@ -229,8 +234,8 @@ func TestImport(t *testing.T) {
 		if !hasCall(f.calls("hc.log"), "label", "t5", "herdr.task=APP-2", "herdr.role=worker") {
 			t.Errorf("the live old worker was not labelled: %v", f.calls("hc.log"))
 		}
-		if got := strings.TrimSpace(f.ok("add", "New work", "--space", "my-app")); got != "APP-6" {
-			t.Errorf("the next task is %s, not APP-6", got)
+		if got := strings.TrimSpace(f.ok("add", "New work", "--space", "my-app")); got != "APP-7" {
+			t.Errorf("the next task is %s, not APP-7", got)
 		}
 	})
 
@@ -321,15 +326,27 @@ func TestImport(t *testing.T) {
 		f := newFixture(t)
 		app, _ := f.appProject()
 		f.makeSpace("work", "--prefix", "WRK")
+		f.addTask("Made in shp")
 		link := filepath.Join(f.root, "link")
 		if err := os.Symlink(f.repo, link); err != nil {
 			t.Fatal(err)
 		}
 		app["folder"] = link
 		f.shepherdr(map[string]any{"app": app}, roleSettings)
-		f.ok("import")
+		out := f.ok("import")
+		wantIn(t, out, "Not imported: APP-1, as WRK-1 is another task.")
+		wantField(t, f.header("WRK-1"), "title", "Made in shp")
 		wantField(t, f.header("WRK-2"), "imported_key", "APP-2")
-		f.space("work", "next: 6")
+		f.space("work", "next: 7")
+	})
+
+	t.Run("a second project on the same folder is reported, not imported", func(t *testing.T) {
+		f := newFixture(t)
+		app, _ := f.appProject()
+		twin := map[string]any{"version": 1, "folder": f.repo, "kind": "repo", "name": "twin", "slug": "twin",
+			"prefix": "TWIN", "next": 1, "tasks": []any{}}
+		f.shepherdr(map[string]any{"app": app, "twin": twin}, roleSettings)
+		wantIn(t, f.ok("import", "--dry-run"), "Not imported: ~/.herdr/tasks/twin.json: ~/.herdr/tasks/app.json is on the same folder.")
 	})
 }
 

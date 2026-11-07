@@ -114,9 +114,8 @@ func initials(name string) string {
 	return stem[:min(5, len(stem))]
 }
 
-// freshPrefix keeps the prefix unique by adding a digit.
-func freshPrefix(name string, used map[string]bool) string {
-	base := initials(name)
+// freshPrefix keeps a prefix unique by adding a digit.
+func freshPrefix(base string, used map[string]bool) string {
 	prefix := base
 	for number := 2; used[prefix]; number++ {
 		prefix = base + strconv.Itoa(number)
@@ -207,7 +206,7 @@ func spaceAdd(raw []string) error {
 			return refuse("prefix %s is used by another space: %s", prefix, strings.Join(taken, ", "))
 		}
 	} else {
-		prefix = freshPrefix(name, used)
+		prefix = freshPrefix(initials(name), used)
 	}
 	if !prefixForm.MatchString(prefix) {
 		return refuse("--prefix is 2 to 5 letters")

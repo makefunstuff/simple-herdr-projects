@@ -219,10 +219,20 @@ func planImport(projects []oldProject, live []string) (*importPlan, error) {
 	}
 	// Every space first, so an after can name a task of another space.
 	var places []*placed
-	refs := map[string]string{} // an old task ref, like HERD-31, and its shp id
+	refs := map[string]string{}     // an old task ref, like HERD-31, and its shp id
+	onFolder := map[string]string{} // a folder and the project placed on it
 	for i := range projects {
 		p := &projects[i]
-		place, why, err := placeSpace(p, existing)
+		resolved, err := resolveDir(p.Folder)
+		if err != nil {
+			return nil, err
+		}
+		folder := tilde(resolved)
+		if other := onFolder[folder]; other != "" {
+			plan.say("Not imported: %s: %s is on the same folder.\n", tilde(p.path), tilde(other))
+			continue
+		}
+		place, why, err := placeSpace(p, folder, existing)
 		if err != nil {
 			return nil, err
 		}
@@ -237,16 +247,17 @@ func planImport(projects []oldProject, live []string) (*importPlan, error) {
 				place.notes = append(place.notes, fmt.Sprintf("It joined the space on its folder, so its tasks are %s-<n>, not %s-<n>.", prefix, p.Prefix))
 			}
 		case !prefixForm.MatchString(p.Prefix):
-			prefix = freePrefix(initials(place.name), used)
+			prefix = freshPrefix(initials(place.name), used)
 			place.notes = append(place.notes, fmt.Sprintf("%q is not 2 to 5 capitals, so its tasks are %s-<n>.", p.Prefix, prefix))
 		default:
-			prefix = freePrefix(p.Prefix, used)
+			prefix = freshPrefix(p.Prefix, used)
 			if prefix != p.Prefix {
 				place.notes = append(place.notes, fmt.Sprintf("%s was taken, so its tasks are %s-<n>, not %s-<n>.", p.Prefix, prefix, p.Prefix))
 			}
 		}
 		place.head.set("prefix", prefix)
 		used[prefix] = true
+		onFolder[folder] = p.path
 		existing = append(existing, space{name: place.name, head: place.head})
 		places = append(places, place)
 		for _, t := range p.tasks {
@@ -267,12 +278,7 @@ func planImport(projects []oldProject, live []string) (*importPlan, error) {
 
 // placeSpace finds the space a project goes to: the one already on its
 // folder, else a new one named after it, or why there is none.
-func placeSpace(p *oldProject, existing []space) (*placed, string, error) {
-	resolved, err := resolveDir(p.Folder)
-	if err != nil {
-		return nil, "", err
-	}
-	folder := tilde(resolved)
+func placeSpace(p *oldProject, folder string, existing []space) (*placed, string, error) {
 	for _, s := range existing {
 		if s.head.text("folder") != folder {
 			continue
@@ -326,15 +332,6 @@ func importedName(p *oldProject) string {
 	return ""
 }
 
-// freePrefix is a prefix, with a digit added when another space has it.
-func freePrefix(stem string, used map[string]bool) string {
-	prefix := stem
-	for n := 2; used[prefix]; n++ {
-		prefix = stem + strconv.Itoa(n)
-	}
-	return prefix
-}
-
 // space plans one project's tasks and its space file, with next past them all.
 func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[string]bool) error {
 	p := place.old
@@ -345,7 +342,7 @@ func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[
 	}
 	if p.Kind != "repo" {
 		plan.say("It is a folder, not a git repo: its tasks are listed, but none can start here.")
-	} else if !exists(p.Folder) {
+	} else if !exists(expand(place.head.text("folder"))) {
 		plan.say("Its folder is gone.")
 	}
 	next := max(p.Next, 1)
@@ -388,7 +385,15 @@ func (plan *importPlan) task(place *placed, t oldTask, refs map[string]string, i
 	id := refs[oldRef]
 	path := taskPath(place.name, id)
 	if exists(path) {
-		plan.say("  %s is in shp already; kept as it is.", id)
+		head, _, err := parseFile(path)
+		if err != nil {
+			return header{}, false, err
+		}
+		if head.text("imported_key") == oldRef {
+			plan.say("  %s is in shp already; kept as it is.", id)
+		} else {
+			plan.say("  Not imported: %s, as %s is another task.", oldRef, id)
+		}
 		return header{}, false, nil
 	}
 	status := t.State
@@ -407,6 +412,11 @@ func (plan *importPlan) task(place *placed, t oldTask, refs map[string]string, i
 	if status == "queued" && place.old.Kind != "repo" {
 		status = "todo"
 		attention = append(attention, "its space is a folder, not a git repo, so it cannot start")
+	}
+	// Shepherdr gives a task its branch and worktree when it starts it; shp
+	// gives them when it adds it.
+	if (status == "todo" || status == "queued") && place.old.Kind == "repo" && t.Branch == "" {
+		t.Branch, t.Worktree = taskPlace(place.name, id, t.Title)
 	}
 	reviewed := ""
 	if n := len(t.Reviews); n > 0 {
