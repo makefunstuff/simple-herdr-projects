@@ -29,12 +29,12 @@ func reviewPrompt(t task, spaceHead header, head, report string) string {
 	}
 	return fmt.Sprintf(
 		"You review task %s, %q, read-only: never edit files, commit or push.\n"+
-			"Follow ~/.config/herdr-core/templates/reviewer.md.\n"+
+			"%s"+
 			"The task file is %s. Review commit %s in %s: git diff %s...HEAD. Checks: %s.\n"+
 			"Write your report to %s: first a header of counts,\n"+
 			"---\nblocker: <n>\nmajor: <n>\nminor: <n>\n---\n"+
 			"then each finding with its level, file, line and what to do. Then stop.",
-		t.id, t.head.text("title"), tilde(t.path), head, expand(t.head.text("worktree")),
+		t.id, t.head.text("title"), guide("reviewer", reviewerGuide), tilde(t.path), head, expand(t.head.text("worktree")),
 		spaceHead.text("base"), checks, report)
 }
 
@@ -66,6 +66,9 @@ func reviewCmd(raw []string) error {
 	round := done + 1
 	_, spaceHead, _, err := loadSpace(t.space)
 	if err != nil {
+		return err
+	}
+	if err := needRepo(t.space, spaceHead); err != nil {
 		return err
 	}
 	worktree := expand(t.head.text("worktree"))

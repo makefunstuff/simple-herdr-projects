@@ -67,17 +67,12 @@ func branchExists(repo, branch string) bool {
 
 // workerPrompt is the first message a worker gets.
 func workerPrompt(t task) string {
-	return fmt.Sprintf(
-		"You are the worker for task %s in space %s.\n"+
-			"Work only in %s on branch %s; do not start other agents.\n"+
-			"The task file is %s: its header is the state, the Markdown below is the brief.\n"+
-			"Report with: shp status %s --progress <0-100> --step \"<what you are doing>\" --left <e.g. 20m>\n"+
-			"If you need the person, run: shp ask %s \"<your question>\" and wait for the answer here.\n"+
-			"When your work is committed, run: shp review %s. Fix what a round finds, commit and review again.\n"+
-			"Once a round leaves nothing to fix, run: shp ready %s --summary \"<what the person can now do>\".\n"+
-			"Review refuses past the rounds limit; then ask the person: only a person passes --again.",
-		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"),
-		tilde(t.path), t.id, t.id, t.id, t.id)
+	return fillGuide(guide("worker", workerGuide),
+		"{{id}}", t.id,
+		"{{space}}", t.space,
+		"{{worktree}}", expand(t.head.text("worktree")),
+		"{{branch}}", t.head.text("branch"),
+		"{{task}}", tilde(t.path))
 }
 
 // commonDir is where a checkout's shared git objects live.
@@ -198,6 +193,9 @@ func start(id string, queued bool) (task, error) {
 	}
 	_, spaceHead, _, err := loadSpace(t.space)
 	if err != nil {
+		return task{}, err
+	}
+	if err := needRepo(t.space, spaceHead); err != nil {
 		return task{}, err
 	}
 	// An interrupt, as from Ctrl-C, must not leave the task working with no

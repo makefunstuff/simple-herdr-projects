@@ -169,7 +169,7 @@ func TestReview(t *testing.T) {
 		wantField(t, payload, "folder", worktree)
 		wantField(t, payload, "argv", []any{"pi"})
 		prompt := fmt.Sprint(payload["task"])
-		for _, want := range []string{"git diff main...HEAD", "go test ./...", "reviewer.md", "blocker: <n>", "shp-review-" + id + "-1.md"} {
+		for _, want := range []string{"git diff main...HEAD", "go test ./...", "Read only: never edit files", "blocker: <n>", "shp-review-" + id + "-1.md"} {
 			wantIn(t, prompt, want)
 		}
 		if !hasCall(f.calls("hc.log"), "label", "t10", "herdr.task="+id, "herdr.role=reviewer") {

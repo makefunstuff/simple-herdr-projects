@@ -55,7 +55,8 @@ func spaces() ([]space, error) {
 	return found, nil
 }
 
-// loadSpace reads one space and checks it names its repo, prefix and base.
+// loadSpace reads one space and checks it names its repo and prefix. A folder
+// space has no base; commands that need git call needRepo.
 func loadSpace(name string) (string, header, string, error) {
 	path := spacePath(name)
 	if !isFile(path) {
@@ -68,12 +69,20 @@ func loadSpace(name string) (string, header, string, error) {
 	if err := checkFields(path, head, spaceRules); err != nil {
 		return "", header{}, "", err
 	}
-	for _, key := range []string{"folder", "prefix", "base"} {
+	for _, key := range []string{"folder", "prefix"} {
 		if head.text(key) == "" {
 			return "", header{}, "", refuse("%s has no %s", tilde(path), key)
 		}
 	}
 	return path, head, body, nil
+}
+
+// needRepo refuses a space that is not a git repo: it has no base branch.
+func needRepo(name string, head header) error {
+	if head.text("base") == "" {
+		return refuse("space %s is a folder, not a git repo: it has no base", name)
+	}
+	return nil
 }
 
 // oneSpace is the space to use when the command did not name one.

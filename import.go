@@ -389,9 +389,7 @@ func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[
 		case head.text("status") != "done":
 			open++
 			line := "  " + taskLine(head)
-			if terminal := plan.adopt[head.text("id")]; terminal != "" {
-				line += "  ·  adopts worker " + terminal
-			}
+			line = adoptLine(line, plan.adopt[head.text("id")])
 			plan.say("%s", line)
 		default:
 			done++
@@ -421,7 +419,25 @@ func (plan *importPlan) task(place *placed, t oldTask, refs map[string]string, i
 	}
 	path := taskPath(place.name, id)
 	if exists(path) {
-		plan.say("  %s is in shp already; kept as it is.", id)
+		line := fmt.Sprintf("  %s is in shp already; kept as it is.", id)
+		head, _, err := parseFile(path)
+		if err != nil {
+			return header{}, false, err
+		}
+		// A delta import keeps the task but still adopts the worker running for
+		// it, so say, review, ready and done find that worker afterwards. A
+		// worker whose folder is gone is left alone: it cannot do the work.
+		if status := head.text("status"); status == "working" || status == "ready" {
+			if terminal := liveWorker(t, isLive); terminal != "" {
+				if exists(expand(head.text("worktree"))) {
+					plan.adopt[id] = terminal
+					line = adoptLine(line, terminal)
+				} else {
+					line += "  ·  its worktree is gone; its worker is not adopted"
+				}
+			}
+		}
+		plan.say("%s", line)
 		return header{}, false, nil
 	}
 	status := t.State
@@ -578,6 +594,14 @@ func liveWorker(t oldTask, isLive map[string]bool) string {
 		return ""
 	}
 	return last.Address
+}
+
+// adoptLine names the old worker a task keeps, when one was adopted.
+func adoptLine(line, terminal string) string {
+	if terminal == "" {
+		return line
+	}
+	return line + "  ·  adopts worker " + terminal
 }
 
 // setText sets a header field when there is something to set.

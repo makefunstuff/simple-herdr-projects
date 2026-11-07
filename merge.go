@@ -29,6 +29,9 @@ func acceptCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
+	if err := needRepo(t.space, spaceHead); err != nil {
+		return err
+	}
 	worktree := expand(t.head.text("worktree"))
 	head, err := gitHead(worktree)
 	if err != nil {
@@ -286,6 +289,9 @@ func followMerge(t task) error {
 	if err != nil {
 		return err
 	}
+	if err := needRepo(t.space, spaceHead); err != nil {
+		return err
+	}
 	repo := expand(spaceHead.text("folder"))
 	url := t.head.text("pr")
 	out, errOut, err := runIn(repo, "gh", "pr", "view", url, "--json", "state,mergeable,mergeStateStatus,mergeCommit")
@@ -427,6 +433,9 @@ func reopenReady(t task) error {
 func reopenDone(t task) error {
 	_, spaceHead, _, err := loadSpace(t.space)
 	if err != nil {
+		return err
+	}
+	if err := needRepo(t.space, spaceHead); err != nil {
 		return err
 	}
 	repo := expand(spaceHead.text("folder"))

@@ -158,6 +158,8 @@ func fakeApp(state string, args []string) int {
 		return 0
 	}
 	switch {
+	case args[1] == "tab.new" && strings.Contains(args[2], `"name":"Assistant"`):
+		fmt.Println(`{"space": "sp-repo", "tab": "tb-assistant", "terminal": "t20"}`)
 	case args[1] == "tab.new" && strings.Contains(args[2], `"name":"Review"`):
 		return fakeReviewer(state, args[2])
 	case args[1] == "tab.new" && exists(filepath.Join(state, "tabs_fail")):
@@ -425,6 +427,69 @@ func (f *fixture) worker(id string) {
 		"address": "t9", "state": "live", "created_ms": 1,
 		"labels": map[string]any{"herdr.role": "worker", "herdr.task": id},
 	}}})
+}
+
+func TestSpaceStart(t *testing.T) {
+	t.Run("starts an Assistant in the space's Herdr space", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		out := f.ok("space", "start", "work")
+		wantIn(t, out, "its Assistant is in t20")
+		var payload map[string]any
+		for _, call := range f.calls("app.log") {
+			if len(call) == 3 && call[1] == "tab.new" && strings.Contains(call[2], `"name":"Assistant"`) {
+				_ = json.Unmarshal([]byte(call[2]), &payload)
+			}
+		}
+		wantField(t, payload, "space", "sp-repo")
+		wantField(t, payload, "folder", f.repo)
+		wantField(t, payload, "argv", []any{"pi"})
+		prompt := fmt.Sprint(payload["task"])
+		for _, want := range []string{"You are the Assistant for the space work", "shp add", "shp start", "shp list"} {
+			wantIn(t, prompt, want)
+		}
+		if !hasCall(f.calls("hc.log"), "label", "t20", "herdr.role=coordinator") {
+			t.Errorf("the Assistant was not labelled: %v", f.calls("hc.log"))
+		}
+	})
+
+	t.Run("leaves a live Assistant alone", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		f.fact("ls.json", map[string]any{"terminals": []any{map[string]any{
+			"address": "t21", "state": "live",
+			"labels": map[string]any{"herdr.role": "coordinator", "herdr.space": "sp-repo"},
+		}}})
+		out := f.ok("space", "start", "work")
+		wantIn(t, out, "already live in t21")
+		for _, call := range f.calls("app.log") {
+			if len(call) == 3 && call[1] == "tab.new" && strings.Contains(call[2], `"name":"Assistant"`) {
+				t.Errorf("a second Assistant was started: %v", call)
+			}
+		}
+	})
+
+	t.Run("a folder space cannot start a task", func(t *testing.T) {
+		f := newFixture(t)
+		f.shepherdr(map[string]any{"home": f.homeProject()}, roleSettings)
+		f.ok("import")
+		id := strings.TrimSpace(f.ok("add", "a folder task", "--space", "home"))
+		got := f.refused("start", id)
+		wantIn(t, got, "space home is a folder, not a git repo: it has no base")
+	})
+
+	t.Run("every space, including one that is a folder", func(t *testing.T) {
+		f := newFixture(t)
+		app, _ := f.appProject()
+		f.shepherdr(map[string]any{"app": app, "home": f.homeProject()}, roleSettings)
+		f.ok("import")
+		f.fact("spaces.json", map[string]any{"spaces": []any{map[string]any{
+			"id": "sp-home", "folder": f.home, "machine": nil,
+		}}})
+		out := f.ok("space", "start")
+		wantIn(t, out, "space home: its Assistant is in t20")
+		wantIn(t, out, "space my-app: its Assistant is in t20")
+	})
 }
 
 func TestSpace(t *testing.T) {
