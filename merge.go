@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
+	"strconv"
 	"strings"
 )
-
-// reopenSuffix is the -<n> a reopen adds to a branch and its worktree.
-var reopenSuffix = regexp.MustCompile(`-([2-9]|[1-9][0-9]+)$`)
 
 func acceptCmd(raw []string) error {
 	a, err := parseArgs(raw, nil, []string{"yes"})
@@ -320,7 +317,9 @@ func finishPR(t task, repo, merged string) error {
 		if err := move(cur, "merging", "done"); err != nil {
 			return err
 		}
-		cur.head.set("merged", merged)
+		if merged != "" { // GitHub may not name the commit yet
+			cur.head.set("merged", merged)
+		}
 		return nil
 	})
 	if err != nil {
@@ -464,8 +463,11 @@ func reopenDone(t task) error {
 // branch is taken as an earlier reopen's and replaced, so suffixes never stack.
 func freshPlace(repo string, t task) (string, string) {
 	stem, place := t.head.text("branch"), t.head.text("worktree")
-	if m := reopenSuffix.FindString(stem); m != "" && strings.HasSuffix(place, m) {
-		stem, place = strings.TrimSuffix(stem, m), strings.TrimSuffix(place, m)
+	if cut := strings.LastIndex(stem, "-"); cut >= 0 {
+		suffix := stem[cut:]
+		if n, err := strconv.Atoi(suffix[1:]); err == nil && n >= 2 && strings.HasSuffix(place, suffix) {
+			stem, place = stem[:cut], strings.TrimSuffix(place, suffix)
+		}
 	}
 	for n := 2; ; n++ {
 		branch, worktree := fmt.Sprintf("%s-%d", stem, n), fmt.Sprintf("%s-%d", place, n)

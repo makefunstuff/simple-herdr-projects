@@ -244,14 +244,15 @@ func addCmd(raw []string) error {
 		return refuse("%s has no usable next", tilde(path))
 	}
 	id, following := nextID(spaceName, head.text("prefix"), number)
-	branch, worktree := taskPlace(spaceName, id, title)
+	branch := "task/" + id[strings.LastIndex(id, "-")+1:] + "-" + slug(title)
+	worktree := filepath.Join(homeDir(), ".herdr", "worktrees", spaceName, strings.ReplaceAll(branch, "/", "-"))
 	fields := []field{
 		{"id", id},
 		{"title", title},
 		{"status", status},
 		{"agent", agent},
 		{"branch", branch},
-		{"worktree", worktree},
+		{"worktree", tilde(worktree)},
 		{"asks", []any{}},
 	}
 	if parent != "" {
@@ -278,13 +279,6 @@ func addCmd(raw []string) error {
 	}
 	fmt.Println(id)
 	return nil
-}
-
-// taskPlace is where a task works: its branch and its worktree, with ~.
-func taskPlace(spaceName, id, title string) (string, string) {
-	branch := "task/" + id[strings.LastIndex(id, "-")+1:] + "-" + slug(title)
-	worktree := filepath.Join(homeDir(), ".herdr", "worktrees", spaceName, strings.ReplaceAll(branch, "/", "-"))
-	return branch, tilde(worktree)
 }
 
 func agentFlag(a *args) ([]any, error) {

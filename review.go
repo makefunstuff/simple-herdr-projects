@@ -318,10 +318,13 @@ func clean(dir string, untracked bool) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(out) != "" {
-		return refuse("%s has uncommitted changes", tilde(dir))
+	if strings.TrimSpace(out) == "" {
+		return nil
 	}
-	return nil
+	if untracked {
+		return refuse("%s has uncommitted changes or untracked files", tilde(dir))
+	}
+	return refuse("%s has uncommitted changes", tilde(dir))
 }
 
 // killTerminals ends a task's live terminals.
