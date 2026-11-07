@@ -223,10 +223,13 @@ func configCmd(raw []string) error {
 
 func spaceCmd(raw []string) error {
 	if len(raw) == 0 {
-		return usage("space needs a command: add")
+		return usage("space needs a command: add or start")
 	}
-	if raw[0] == "add" {
+	switch raw[0] {
+	case "add":
 		return spaceAdd(raw[1:])
+	case "start":
+		return spaceStartCmd(raw[1:])
 	}
 	return usage("unknown space command %s", raw[0])
 }
@@ -251,6 +254,9 @@ func helpText(argv []string) string {
 	}
 	if command == "space" && len(argv) > 1 && argv[1] == "add" {
 		return spaceAddHelp
+	}
+	if command == "space" && len(argv) > 1 && argv[1] == "start" {
+		return spaceStartHelp
 	}
 	switch command {
 	case "config":
@@ -325,11 +331,21 @@ options:
   -h, --help  show this help message and exit
 `
 
-const spaceHelp = `usage: shp space [-h] {add} ...
+const spaceHelp = `usage: shp space [-h] {add,start} ...
 
 positional arguments:
-  {add}
+  {add,start}
     add       add a space
+    start     start each space's Assistant, or one space's
+
+options:
+  -h, --help  show this help message and exit
+`
+
+const spaceStartHelp = `usage: shp space start [-h] [name]
+
+positional arguments:
+  name        one space; every space when left out
 
 options:
   -h, --help  show this help message and exit

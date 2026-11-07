@@ -68,7 +68,7 @@ func loadSpace(name string) (string, header, string, error) {
 	if err := checkFields(path, head, spaceRules); err != nil {
 		return "", header{}, "", err
 	}
-	for _, key := range []string{"folder", "prefix", "base"} {
+	for _, key := range []string{"folder", "prefix"} {
 		if head.text(key) == "" {
 			return "", header{}, "", refuse("%s has no %s", tilde(path), key)
 		}

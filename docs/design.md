@@ -28,14 +28,14 @@ Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status
 
 ## 3. CLI
 
-`shp`: one Go binary, standard library only, over `hc` and `herdr-app`. Commands are the role lists above plus `space add`, `list`, `show`, `tick`, `ready --summary/--proof`, `import`, `config`. `list` shows id, status, title, progress and step or asks.
+`shp`: one Go binary, standard library only, over `hc` and `herdr-app`. Commands are the role lists above plus `space add`, `list`, `show`, `tick`, `ready --summary/--proof`, `import`, `config`, `space start [name]`. `list` shows id, status, title, progress and step or asks.
 
 `--json` uses header keys. Exit 0 done, 1 refused (why on stderr), 2 bad usage; refusals say what would move them. `accept` confirms unless `--yes`; board and phone confirm first. `config` prints the file.
 
 ## 4. Agents
 
 - **Worker.** `start` makes the worktree and workspace with `space.new --folder <worktree> --tab Chat --argv <agent> --task "<rules and task path>"`, takes the terminal id, labels `herdr.task=APP-1`, `herdr.role=worker`. A false `first_message.sent` is read and retried, never blind-resent. `say` finds it by those labels or `imported_key`.
-- **Coordinator.** One per space: tab "Assistant", label `herdr.role=coordinator`, argv from space else config; first message points at the space file; `space add --coordinator` or `start` runs it.
+- **Coordinator.** One per space: tab "Assistant", label `herdr.role=coordinator`, argv from space else config; first message points at the space file; `shp space start [name]` runs it for one space or every space.
 - **Reviewer.** Only `review`: `tab.new --name Review --space <workspace> --folder <worktree> --argv <reviewer> --task <prompt>`, labelled `herdr.role=reviewer`, `herdr.task=APP-1`; checks `first_message.sent`, retries after reading, waits as long as needed, keeps its tab, never fails it. Never headless.
 - **Queue.** `max_running` workers per machine (default 4), reviewers don't count; a child waits for `parent` and every `after`. Only `start`, `tick` and the board's 10 s tick start work; reads never do.
 
