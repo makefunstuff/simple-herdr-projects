@@ -24,8 +24,7 @@ type oldProject struct {
 	Prefix string
 	Next   int
 	GitHub struct{ Repo string }
-	Tasks  []json.RawMessage // as read; tasks holds them decoded
-	tasks  []oldTask
+	Tasks  []oldTask
 }
 
 // oldTask is the part of a Shepherdr task that shp has a place for, with its
@@ -62,8 +61,19 @@ type oldTask struct {
 		Done int
 		Left int64
 	}
+	Details  string
 	Waits    string
 	Archived int64
+}
+
+// UnmarshalJSON decodes a task and keeps its record as it was.
+func (t *oldTask) UnmarshalJSON(data []byte) error {
+	type plain oldTask // without this method
+	if err := json.Unmarshal(data, (*plain)(t)); err != nil {
+		return err
+	}
+	t.raw = slices.Clone(data)
+	return nil
 }
 
 // role is one of Shepherdr's role settings in ~/.herdr/shepherdr.json.
@@ -175,8 +185,8 @@ func readProjects() ([]oldProject, []string, error) {
 		if err != nil {
 			return nil, nil, wrap(path, err)
 		}
-		p, err := decodeProject(path, data)
-		if err != nil {
+		p := oldProject{path: path}
+		if err := json.Unmarshal(data, &p); err != nil {
 			unread = append(unread, fmt.Sprintf("Not imported: %s: %v.", tilde(path), err))
 			continue
 		}
@@ -186,21 +196,6 @@ func readProjects() ([]oldProject, []string, error) {
 		return nil, nil, refuse("%s holds no Shepherdr projects", tilde(dir))
 	}
 	return projects, unread, nil
-}
-
-func decodeProject(path string, data []byte) (oldProject, error) {
-	p := oldProject{path: path}
-	if err := json.Unmarshal(data, &p); err != nil {
-		return oldProject{}, err
-	}
-	p.tasks = make([]oldTask, len(p.Tasks))
-	for i, raw := range p.Tasks {
-		if err := json.Unmarshal(raw, &p.tasks[i]); err != nil {
-			return oldProject{}, fmt.Errorf("task %d: %w", i+1, err)
-		}
-		p.tasks[i].raw = raw
-	}
-	return p, nil
 }
 
 // planImport works out the files an import writes and the report it gives.
@@ -260,8 +255,15 @@ func planImport(projects []oldProject, live []string) (*importPlan, error) {
 		onFolder[folder] = p.path
 		existing = append(existing, space{name: place.name, head: place.head})
 		places = append(places, place)
-		for _, t := range p.tasks {
-			refs[fmt.Sprintf("%s-%d", p.Prefix, t.ID)] = fmt.Sprintf("%s-%d", prefix, t.ID)
+		for _, t := range p.Tasks {
+			oldRef, id := fmt.Sprintf("%s-%d", p.Prefix, t.ID), fmt.Sprintf("%s-%d", prefix, t.ID)
+			other, err := isOtherTask(taskPath(place.name, id), oldRef)
+			if err != nil {
+				return nil, err
+			}
+			if !other { // a reference to a task that shp has as another stays unresolved
+				refs[oldRef] = id
+			}
 		}
 	}
 	isLive := map[string]bool{}
@@ -274,6 +276,18 @@ func planImport(projects []oldProject, live []string) (*importPlan, error) {
 		}
 	}
 	return plan, nil
+}
+
+// isOtherTask reports whether a task file is there already for another task than oldRef.
+func isOtherTask(path, oldRef string) (bool, error) {
+	if !exists(path) {
+		return false, nil
+	}
+	head, _, err := parseFile(path)
+	if err != nil {
+		return false, err
+	}
+	return head.text("imported_key") != oldRef, nil
 }
 
 // placeSpace finds the space a project goes to: the one already on its
@@ -289,14 +303,9 @@ func placeSpace(p *oldProject, folder string, existing []space) (*placed, string
 		}
 		return &placed{old: p, name: s.name, head: head, body: body}, "", nil
 	}
-	name := importedName(p)
+	name := importedName(p, existing)
 	if name == "" {
 		return nil, "its name and slug make no space name", nil
-	}
-	for _, s := range existing {
-		if s.name == name {
-			return nil, fmt.Sprintf("space %s is already on %s", name, s.head.text("folder")), nil
-		}
 	}
 	var notes []string
 	if name != p.Name {
@@ -305,7 +314,7 @@ func placeSpace(p *oldProject, folder string, existing []space) (*placed, string
 	head := header{fields: []field{{"folder", folder}}}
 	if p.Kind == "repo" {
 		base := "main"
-		for _, t := range p.tasks {
+		for _, t := range p.Tasks {
 			if t.Base != "" {
 				base = t.Base // the newest task's base
 			}
@@ -321,15 +330,33 @@ func placeSpace(p *oldProject, folder string, existing []space) (*placed, string
 	return &placed{old: p, name: name, head: head, notes: notes}, "", nil
 }
 
-// importedName is a project's name as a space name, else its slug's.
-func importedName(p *oldProject) string {
+// importedName is a project's name as a free space name, else its slug's;
+// when both are taken, the first with a number added.
+func importedName(p *oldProject, existing []space) string {
+	taken := func(name string) bool {
+		return slices.ContainsFunc(existing, func(s space) bool { return s.name == name })
+	}
+	first := ""
 	for _, candidate := range []string{p.Name, p.Slug} {
 		name := strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(candidate), "-"), "-")
-		if spaceName.MatchString(name) {
+		if !spaceName.MatchString(name) {
+			continue
+		}
+		if !taken(name) {
+			return name
+		}
+		if first == "" {
+			first = name
+		}
+	}
+	if first == "" {
+		return ""
+	}
+	for n := 2; ; n++ {
+		if name := fmt.Sprintf("%s-%d", first, n); !taken(name) {
 			return name
 		}
 	}
-	return ""
 }
 
 // space plans one project's tasks and its space file, with next past them all.
@@ -349,8 +376,8 @@ func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[
 	if n, ok := place.head.number("next"); ok {
 		next = max(next, n)
 	}
-	open, done, archived := 0, 0, 0
-	for _, t := range p.tasks {
+	open, done, archived, skipped := 0, 0, 0, 0
+	for _, t := range p.Tasks {
 		next = max(next, t.ID+1)
 		head, imported, err := plan.task(place, t, refs, isLive)
 		if err != nil {
@@ -358,6 +385,7 @@ func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[
 		}
 		switch {
 		case !imported:
+			skipped++
 		case head.text("status") != "done":
 			open++
 			line := "  " + taskLine(head)
@@ -372,7 +400,11 @@ func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[
 			}
 		}
 	}
-	plan.say("%d open, %d done (%d of them archived). Next is %s-%d.\n", open, done, archived, prefix, next)
+	counts := fmt.Sprintf("%d open, %d done (%d of them archived)", open, done, archived)
+	if skipped > 0 {
+		counts += fmt.Sprintf(", %d not written (above)", skipped)
+	}
+	plan.say("%s. Next is %s-%d.\n", counts, prefix, next)
 	place.head.set("next", json.Number(strconv.Itoa(next)))
 	plan.write(spacePath(place.name), render(place.head, place.body))
 	return nil
@@ -382,18 +414,14 @@ func (plan *importPlan) space(place *placed, refs map[string]string, isLive map[
 // task already in shp is left as it is, and reports false.
 func (plan *importPlan) task(place *placed, t oldTask, refs map[string]string, isLive map[string]bool) (header, bool, error) {
 	oldRef := fmt.Sprintf("%s-%d", place.old.Prefix, t.ID)
-	id := refs[oldRef]
+	id, ok := refs[oldRef]
+	if !ok {
+		plan.say("  Not imported: %s, as %s-%d is another task.", oldRef, place.head.text("prefix"), t.ID)
+		return header{}, false, nil
+	}
 	path := taskPath(place.name, id)
 	if exists(path) {
-		head, _, err := parseFile(path)
-		if err != nil {
-			return header{}, false, err
-		}
-		if head.text("imported_key") == oldRef {
-			plan.say("  %s is in shp already; kept as it is.", id)
-		} else {
-			plan.say("  Not imported: %s, as %s is another task.", oldRef, id)
-		}
+		plan.say("  %s is in shp already; kept as it is.", id)
 		return header{}, false, nil
 	}
 	status := t.State
@@ -413,10 +441,15 @@ func (plan *importPlan) task(place *placed, t oldTask, refs map[string]string, i
 		status = "todo"
 		attention = append(attention, "its space is a folder, not a git repo, so it cannot start")
 	}
-	// Shepherdr gives a task its branch and worktree when it starts it; shp
-	// gives them when it adds it.
-	if (status == "todo" || status == "queued") && place.old.Kind == "repo" && t.Branch == "" {
-		t.Branch, t.Worktree = taskPlace(place.name, id, t.Title)
+	// Shepherdr gives a task its branch and worktree when it starts it, and
+	// its oldest tasks kept no worktree; shp gives both when it adds one.
+	if place.old.Kind == "repo" {
+		if t.Branch == "" && (status == "todo" || status == "queued") {
+			t.Branch = taskBranch(id, t.Title)
+		}
+		if t.Branch != "" && t.Worktree == "" {
+			t.Worktree = worktreeFor(place.name, t.Branch)
+		}
 	}
 	reviewed := ""
 	if n := len(t.Reviews); n > 0 {
@@ -482,6 +515,9 @@ func (plan *importPlan) task(place *placed, t oldTask, refs map[string]string, i
 	body := ""
 	if prompt := strings.Trim(t.Prompt, "\n"); strings.TrimSpace(prompt) != "" {
 		body = "\n" + prompt + "\n"
+	}
+	if details := strings.TrimSpace(t.Details); details != "" {
+		body += "\n## Details from Shepherdr\n\n" + details + "\n"
 	}
 	plan.write(path, render(head, body))
 	for i, r := range t.Reviews {

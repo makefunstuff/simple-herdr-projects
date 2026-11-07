@@ -84,7 +84,7 @@ func (f *fixture) appProject() (map[string]any, string) {
 			map[string]any{"id": 1, "title": "Old work", "prompt": "Did it.", "mode": "worktree",
 				"state": "done", "archived": 1, "branch": "task/1-old", "base": "main",
 				"worktree": filepath.Join(f.home, "gone"), "merged": true,
-				"summary": "It was done", "proof": map[string]any{"id": "proof-1"},
+				"summary": "It was done", "details": "- Checked it.", "proof": map[string]any{"id": "proof-1"},
 				"pr":      map[string]any{"url": "https://github.com/example/app/pull/1"},
 				"reviews": []any{map[string]any{"round": 1, "text": "Round 1: fine", "head": "abc123"}},
 				"agents":  []any{map[string]any{"address": "t1", "agent": "pi", "ended": 5}}},
@@ -112,10 +112,12 @@ func (f *fixture) appProject() (map[string]any, string) {
 func (f *fixture) otherProject() map[string]any {
 	return map[string]any{
 		"version": 1, "folder": f.makeRepo("other"), "kind": "repo", "name": "other.lib", "slug": "other-lib",
-		"prefix": "OTH", "next": 2, "github": map[string]any{"repo": "example/other"},
+		"prefix": "OTH", "next": 3, "github": map[string]any{"repo": "example/other"},
 		"tasks": []any{
 			map[string]any{"id": 1, "title": "Follow up", "prompt": "After APP-3.", "mode": "worktree",
 				"state": "todo", "after_ext": []any{map[string]any{"ref": "APP-3", "machine": nil}}, "agents": []any{}},
+			map[string]any{"id": 2, "title": "Older work", "prompt": "From Shepherdr 2.", "mode": "worktree",
+				"state": "done", "branch": "work/2-older", "agents": []any{}},
 		},
 	}
 }
@@ -190,7 +192,8 @@ func TestImport(t *testing.T) {
 			wantIn(t, list, want)
 		}
 		f.space("my-app", "prefix: APP", "base: main", "merge: local", "next: 7")
-		f.space("other-lib", "prefix: OTH", "merge: pr", "next: 2")
+		f.space("other-lib", "prefix: OTH", "merge: pr", "next: 3")
+		wantField(t, f.headerIn("other-lib", "OTH-2"), "worktree", "~/.herdr/worktrees/other-lib/work-2-older")
 		home := f.space("home", "prefix: JPL", "folder: ~")
 		if strings.Contains(home, "base:") {
 			t.Errorf("a folder space got a base:\n%s", home)
@@ -213,6 +216,7 @@ func TestImport(t *testing.T) {
 		wantIn(t, f.read("spaces/my-app/APP-1.md"), "\nDid it.\n")
 		wantIn(t, f.read("spaces/my-app/APP-1.review-1.md"), "Round 1: fine")
 		wantIn(t, f.read("spaces/my-app/APP-1.shepherdr.json"), `"archived": 1`)
+		wantIn(t, f.read("spaces/my-app/APP-1.md"), "## Details from Shepherdr\n\n- Checked it.\n")
 
 		running := f.headerIn("my-app", "APP-2")
 		wantField(t, running, "agent", "[claude]")
@@ -303,21 +307,23 @@ func TestImport(t *testing.T) {
 		f.ok("status", "APP-3", "--step", "edited in shp")
 		out := f.ok("import")
 		wantIn(t, out, "APP-3 is in shp already; kept as it is.")
+		wantIn(t, out, "0 open, 0 done (0 of them archived), 6 not written (above). Next is APP-7.")
 		wantField(t, f.headerIn("my-app", "APP-3"), "step", "edited in shp")
 		if spaces, _ := filepath.Glob(filepath.Join(f.store, "spaces", "*.md")); len(spaces) != 1 {
 			t.Errorf("a second run made %d space files, not 1", len(spaces))
 		}
 	})
 
-	t.Run("a taken prefix gets a digit and references follow", func(t *testing.T) {
+	t.Run("a taken name and prefix get another and references follow", func(t *testing.T) {
 		f := newFixture(t)
 		app, _ := f.appProject()
 		app["folder"] = f.makeRepo("app-two")
-		f.makeSpace("work", "--prefix", "APP")
+		f.makeSpace("my-app", "--prefix", "APP")
 		f.shepherdr(map[string]any{"app": app}, roleSettings)
 		out := f.ok("import")
+		wantIn(t, out, "## app: APP2")
 		wantIn(t, out, "APP was taken, so its tasks are APP2-<n>")
-		next := f.headerIn("my-app", "APP2-3")
+		next := f.headerIn("app", "APP2-3")
 		wantField(t, next, "after", "[APP2-2]")
 		wantField(t, next, "imported_key", "APP-3")
 	})
@@ -332,9 +338,15 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 		app["folder"] = link
+		app["tasks"].([]any)[2].(map[string]any)["after"] = []any{1} // APP-3 waited on APP-1
 		f.shepherdr(map[string]any{"app": app}, roleSettings)
 		out := f.ok("import")
 		wantIn(t, out, "Not imported: APP-1, as WRK-1 is another task.")
+		gated := f.header("WRK-3")
+		if _, ok := gated["after"]; ok {
+			t.Errorf("WRK-3 waits on %v, not on nothing", gated["after"])
+		}
+		wantIn(t, fmtValue(gated["step"]), "it waited on APP-1")
 		wantField(t, f.header("WRK-1"), "title", "Made in shp")
 		wantField(t, f.header("WRK-2"), "imported_key", "APP-2")
 		f.space("work", "next: 7")
