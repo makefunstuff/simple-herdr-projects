@@ -57,6 +57,20 @@ func (f *fixture) order(want ...string) int {
 	})
 }
 
+// setWorkspace records another Herdr space as the task's.
+func (f *fixture) setWorkspace(id, workspace string) {
+	f.t.Helper()
+	path := f.taskPath(id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	text := strings.Replace(string(data), "\nworkspace: sp-test\n", "\nworkspace: "+workspace+"\n", 1)
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func (f *fixture) installMod(name string) {
 	f.t.Helper()
 	dir := filepath.Join(f.home, ".config", "herdr-app", "mods", name)
@@ -246,21 +260,23 @@ func TestRemoval(t *testing.T) {
 		}
 	})
 
-	t.Run("a restart closes the task's old space, leaving no orphan", func(t *testing.T) {
+	t.Run("a restart closes the task's old space once the new one is recorded", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
 		id, worktree := f.working("Search box")
 		f.setStatus(id, "todo")
-		f.openSpaces(herdrSpaceAt("sp-test", worktree, "Chat", "Terminal"))
+		f.setWorkspace(id, "sp-old")
+		f.openSpaces(herdrSpaceAt("sp-old", worktree, "Chat", "Terminal"))
 		f.ok("start", id)
+		wantField(t, f.header(id), "workspace", "sp-test")
 		var launches []int
 		for i, call := range f.calls("all.log") {
 			if isLaunch(call[1:]) {
 				launches = append(launches, i)
 			}
 		}
-		closed := f.order("herdr-app", "do", "space.close", `{"confirmed":true,"id":"sp-test"}`)
-		if len(launches) != 2 || closed < launches[0] || closed > launches[1] {
+		closed := f.order("herdr-app", "do", "space.close", `{"confirmed":true,"id":"sp-old"}`)
+		if len(launches) != 2 || closed < launches[1] {
 			t.Errorf("launches at %v, close at %d: %v", launches, closed, f.calls("all.log"))
 		}
 	})

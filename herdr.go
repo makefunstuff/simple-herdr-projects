@@ -127,12 +127,11 @@ func openPRTab(t task) error {
 	return openTab(workspace, expand(t.head.text("worktree")), "PR", "px-pr")
 }
 
-// closeSpace closes the Herdr space a task was given, if it is still open,
-// ending whatever runs in it. Only that one space goes: the repo's and those
-// made by hand stay. Callers kill the task's terminals first, so no live task
+// closeSpace closes a task's Herdr space, if it is still open, ending
+// whatever runs in it. Only that one space goes: the repo's and those made by
+// hand stay. Callers kill the task's terminals first, so no live task
 // terminal holds the space while it goes.
-func closeSpace(t task) {
-	workspace := t.head.text("workspace")
+func closeSpace(id, workspace string) {
 	if workspace == "" {
 		return
 	}
@@ -141,6 +140,6 @@ func closeSpace(t task) {
 		_, err = herdrApp("space.close", map[string]any{"id": workspace, "confirmed": true})
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shp: %v; %s's space %s may still be open\n", err, t.id, workspace)
+		fmt.Fprintf(os.Stderr, "shp: %v; %s's space %s may still be open\n", err, id, workspace)
 	}
 }

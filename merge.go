@@ -192,7 +192,7 @@ func stillAccepted(t task, reviewed string) error {
 // goes last: an accept run from its Terminal tab ends with it.
 func cleanUp(t task, repo string) {
 	killTerminals(t.id)
-	defer closeSpace(t)
+	defer closeSpace(t.id, t.head.text("workspace"))
 	// A branch on just the reviewed commit is merged, even by a squash git
 	// cannot see; one with newer commits goes only if git agrees.
 	deleteFlag := "-d"
@@ -376,7 +376,7 @@ func doneCmd(raw []string) error {
 	killTerminals(id)
 	// Printed first: closing the space may end the shell this runs in.
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
-	closeSpace(t)
+	closeSpace(id, t.head.text("workspace"))
 	return nil
 }
 

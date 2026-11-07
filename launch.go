@@ -209,6 +209,7 @@ func start(id string, queued bool) (task, error) {
 	if err != nil {
 		return task{}, err
 	}
+	oldSpace := t.head.text("workspace")
 	workspace, err := launch(spaceHead, t)
 	interrupted := len(interrupt) > 0
 	if interrupted {
@@ -241,6 +242,11 @@ func start(id string, queued bool) (task, error) {
 	t.head.set("workspace", recorded)
 	if err := writeText(t.path, render(t.head, t.body)); err != nil {
 		return task{}, err
+	}
+	// A restarted task's old space goes only once the new one is recorded:
+	// closing it may end the shell this runs in.
+	if oldSpace != workspace {
+		closeSpace(id, oldSpace)
 	}
 	return t, nil
 }
@@ -307,9 +313,8 @@ func launch(spaceHead header, t task) (string, error) {
 		}
 		argv = cfg.words("worker") // config refuses an empty worker
 	}
-	if t.head.text("workspace") != "" { // a restarted task's old space would be left behind
-		killTerminals(t.id)
-		closeSpace(t)
+	if t.head.text("workspace") != "" {
+		killTerminals(t.id) // a restart's; start closes its old space later
 	}
 	prompt := workerPrompt(t)
 	reply, err := herdrApp("space.new", map[string]any{
