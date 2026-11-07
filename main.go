@@ -15,16 +15,22 @@ func main() {
 }
 
 var commands = map[string]func([]string) error{
-	"config": configCmd,
-	"space":  spaceCmd,
-	"add":    addCmd,
-	"list":   listCmd,
-	"show":   showCmd,
-	"start":  startCmd,
-	"tick":   tickCmd,
-	"status": reportCmd,
-	"ask":    askCmd,
-	"say":    sayCmd,
+	"config":   configCmd,
+	"space":    spaceCmd,
+	"add":      addCmd,
+	"list":     listCmd,
+	"show":     showCmd,
+	"start":    startCmd,
+	"tick":     tickCmd,
+	"status":   reportCmd,
+	"ask":      askCmd,
+	"say":      sayCmd,
+	"review":   reviewCmd,
+	"reviewed": reviewedCmd,
+	"ready":    readyCmd,
+	"accept":   acceptCmd,
+	"reopen":   reopenCmd,
+	"done":     doneCmd,
 }
 
 func dispatch(argv []string) int {

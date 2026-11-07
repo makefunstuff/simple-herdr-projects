@@ -25,17 +25,9 @@ func (n noSlot) Error() string { return string(n) }
 
 // workerTerminal is the live terminal of a task's worker, if any.
 func workerTerminal(id string) (string, error) {
-	found, err := hcJSON("ls", "--label", "herdr.role=worker", "--label", "herdr.task="+id)
+	alive, err := liveTerminals("herdr.role=worker", "herdr.task="+id)
 	if err != nil {
 		return "", err
-	}
-	terminals, _ := found["terminals"].([]any)
-	var alive []string
-	for _, item := range terminals {
-		terminal, _ := item.(map[string]any)
-		if address, _ := terminal["address"].(string); terminal["state"] == "live" && address != "" {
-			alive = append(alive, address)
-		}
 	}
 	if len(alive) > 1 {
 		return "", refuse("%s has %d live workers: %s", id, len(alive), strings.Join(alive, ", "))
@@ -46,6 +38,33 @@ func workerTerminal(id string) (string, error) {
 	return alive[0], nil
 }
 
+// liveTerminals are the addresses of the live terminals with all these labels.
+func liveTerminals(labels ...string) ([]string, error) {
+	argv := []string{"ls"}
+	for _, label := range labels {
+		argv = append(argv, "--label", label)
+	}
+	found, err := hcJSON(argv...)
+	if err != nil {
+		return nil, err
+	}
+	terminals, _ := found["terminals"].([]any)
+	var alive []string
+	for _, item := range terminals {
+		terminal, _ := item.(map[string]any)
+		if address, _ := terminal["address"].(string); terminal["state"] == "live" && address != "" {
+			alive = append(alive, address)
+		}
+	}
+	return alive, nil
+}
+
+// branchExists reports whether a repo has a local branch.
+func branchExists(repo, branch string) bool {
+	_, _, err := run("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
+}
+
 // workerPrompt is the first message a worker gets.
 func workerPrompt(t task) string {
 	return fmt.Sprintf(
@@ -53,9 +72,12 @@ func workerPrompt(t task) string {
 			"Work only in %s on branch %s; do not start other agents.\n"+
 			"The task file is %s: its header is the state, the Markdown below is the brief.\n"+
 			"Report with: shp status %s --progress <0-100> --step \"<what you are doing>\" --left <e.g. 20m>\n"+
-			"If you need the person, run: shp ask %s \"<your question>\" and wait for the answer here.",
+			"If you need the person, run: shp ask %s \"<your question>\" and wait for the answer here.\n"+
+			"When your work is committed, run: shp review %s. Fix what a round finds, commit and review again.\n"+
+			"Once a round leaves nothing to fix, run: shp ready %s --summary \"<what the person can now do>\".\n"+
+			"Review refuses past the rounds limit; then ask the person: only a person passes --again.",
 		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"),
-		tilde(t.path), t.id, t.id)
+		tilde(t.path), t.id, t.id, t.id, t.id)
 }
 
 // commonDir is where a checkout's shared git objects live.
@@ -107,7 +129,7 @@ func makeWorktree(spaceHead header, t task) error {
 		}
 		return nil
 	}
-	if _, _, err := run("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+	if branchExists(repo, branch) {
 		return refuse("branch %s already exists", branch)
 	}
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
@@ -150,7 +172,7 @@ func deliver(terminal, text, id string) error {
 	if reason, _ := first["reason"].(string); reason != "" {
 		why = " (" + reason + ")"
 	}
-	return refuse("%s: the worker's first message was not sent%s", id, why)
+	return refuse("%s: the agent's first message was not sent%s", id, why)
 }
 
 // start makes the worktree and launches the worker; a queued start also takes a slot.
@@ -381,6 +403,8 @@ func tickCmd(raw []string) error {
 	for _, problem := range problems {
 		fmt.Fprintf(os.Stderr, "shp: %v\n", problem)
 	}
+	problems = append(problems, followMerges(tasks)...)
+	tasks, _ = allTasks() // a merge may have cleared a gate
 	byID := map[string]header{}
 	for _, t := range tasks {
 		byID[t.id] = t.head
