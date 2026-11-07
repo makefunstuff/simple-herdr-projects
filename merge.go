@@ -251,7 +251,9 @@ func openPR(t task, spaceHead header) error {
 	if err != nil {
 		return err
 	}
-	openPRTab(t)
+	if err := openPRTab(t); err != nil {
+		fmt.Fprintf(os.Stderr, "shp: %v; %s has no PR tab\n", err, t.id)
+	}
 	if _, _, err := runIn(worktree, "gh", "pr", "merge", "--auto", "--squash", url); err != nil {
 		fmt.Printf("%s: merging through %s; tick merges it once its checks pass\n", t.id, url)
 		return nil
@@ -369,8 +371,9 @@ func doneCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
-	closeWorkspace(t)
+	// Printed first: closing the space may end the shell this runs in.
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
+	closeWorkspace(t)
 	return nil
 }
 

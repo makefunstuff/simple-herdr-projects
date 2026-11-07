@@ -80,9 +80,11 @@ func repoSpace(name, repo string) (string, error) {
 // openTab adds a tab to a task's space: the mod when it is installed, else a
 // shell in the worktree.
 func openTab(workspace, worktree, name, mod string) error {
-	payload := map[string]any{"name": name, "space": workspace, "folder": worktree}
-	if mod != "" && isFile(filepath.Join(appHome(), "mods", mod, "mod.json")) {
+	payload := map[string]any{"name": name, "space": workspace}
+	if mod != "" && isFile(filepath.Join(appHome(), "mods", mod, "main.js")) {
 		payload["mod"] = mod
+	} else {
+		payload["folder"] = worktree
 	}
 	_, err := herdrApp("tab.new", payload)
 	return err
@@ -107,27 +109,21 @@ func openTaskTabs(t task, workspace string) {
 }
 
 // openPRTab gives a task's space its PR tab, unless it has one.
-func openPRTab(t task) {
+func openPRTab(t task) error {
 	workspace := t.head.text("workspace")
 	if workspace == "" {
-		return
+		return nil
 	}
 	space, err := openSpace(workspace)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "shp: %v; %s has no PR tab\n", err, t.id)
-		return
-	}
-	if space == nil {
-		return
+	if err != nil || space == nil {
+		return err
 	}
 	for _, tab := range space.Tabs {
 		if tab.Name == "PR" {
-			return
+			return nil
 		}
 	}
-	if err := openTab(workspace, expand(t.head.text("worktree")), "PR", "px-pr"); err != nil {
-		fmt.Fprintf(os.Stderr, "shp: %v; %s has no PR tab\n", err, t.id)
-	}
+	return openTab(workspace, expand(t.head.text("worktree")), "PR", "px-pr")
 }
 
 // closeWorkspace ends a task's terminals, then closes the Herdr space the task

@@ -62,7 +62,7 @@ func (f *fixture) installMod(name string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "mod.json"), []byte("{}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.js"), []byte("export default {};\n"), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -111,7 +111,7 @@ func TestRepoSpace(t *testing.T) {
 }
 
 func TestTaskTabs(t *testing.T) {
-	t.Run("a started task's space sits under the repo with its tabs", func(t *testing.T) {
+	t.Run("a started task's space and tabs follow its worktree, after the repo's space", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
 		f.installMod("px-files")
@@ -122,16 +122,17 @@ func TestTaskTabs(t *testing.T) {
 		launch := f.launch()
 		wantField(t, launch, "folder", worktree)
 		wantField(t, launch, "tab", "Chat")
-		if got, want := f.commonDir(worktree), f.commonDir(f.repo); got != want {
-			t.Errorf("worktree of %s, not the repo %s", got, want)
+		calls := f.calls("app.log")
+		if repo := f.appCalls("space.new")[0]; repo["folder"] != f.repo || !isLaunch(calls[len(calls)-4]) {
+			t.Errorf("the repo's space is not made before the launch: %v", calls)
 		}
 		tabs := f.appCalls("tab.new")
 		if got := f.tabNames(); !slices.Equal(got, []string{"Terminal", "Files", "Changes"}) {
 			t.Fatalf("tabs %v", got)
 		}
+		wantField(t, tabs[0], "folder", worktree)
 		for i, mod := range []any{nil, "px-files", "px-changes"} {
 			wantField(t, tabs[i], "space", "sp-test")
-			wantField(t, tabs[i], "folder", worktree)
 			wantField(t, tabs[i], "mod", mod)
 		}
 	})
