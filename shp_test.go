@@ -476,6 +476,9 @@ func TestHelp(t *testing.T) {
 	if got := f.shp(""); got.code != 2 || !strings.Contains(got.stderr, "usage: shp") {
 		t.Errorf("no command: exit %d, %q", got.code, got.stderr)
 	}
+	if got := f.refused("ask", "WORK-1", "--", "--help"); !strings.Contains(got, "no task WORK-1") {
+		t.Errorf("-- --help: %q", got)
+	}
 }
 
 func TestAdd(t *testing.T) {
@@ -549,6 +552,26 @@ func TestAdd(t *testing.T) {
 		f.makeSpace("work")
 		if got := f.refused("add", "X", "--space", "work", "--agent", "claude"); !strings.Contains(got, "JSON like") {
 			t.Errorf("%q", got)
+		}
+	})
+
+	t.Run("adding a task keeps the space brief", func(t *testing.T) {
+		f := newFixture(t)
+		f.okIn("Space brief must survive.\n", "space", "add", "work", "--folder", f.repo, "--brief", "-")
+		spaceFile := filepath.Join(f.store, "spaces", "work.md")
+		spaceBody := func() string {
+			data, err := os.ReadFile(spaceFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, body, _ := strings.Cut(string(data), "\n---\n")
+			return body
+		}
+		before := spaceBody()
+		f.okIn("Task brief.\n", "add", "With a brief", "--space", "work", "--brief", "-")
+		f.addTask("Without a brief")
+		if after := spaceBody(); after != before {
+			t.Errorf("space brief changed from %q to %q", before, after)
 		}
 	})
 
@@ -695,6 +718,23 @@ asks: 5
 `)
 		got := f.refused("list")
 		for _, want := range []string{"WORK-1.md", "asks"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%q lacks %q", got, want)
+			}
+		}
+	})
+
+	t.Run("a numeric id names its file", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		f.writeTask("WORK-1", `---
+id: 7
+title: Broken
+status: todo
+---
+`)
+		got := f.refused("list")
+		for _, want := range []string{"WORK-1.md", "says id 7, not WORK-1"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%q lacks %q", got, want)
 			}

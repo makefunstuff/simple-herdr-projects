@@ -42,8 +42,8 @@ func readTask(path string) (header, string, error) {
 		return header{}, "", err
 	}
 	id := strings.TrimSuffix(filepath.Base(path), ".md")
-	if given := head.text("id"); given != "" && given != id {
-		return header{}, "", refuse("%s says id %s, not %s", tilde(path), given, id)
+	if given := head.val("id"); given != nil && given != "" && given != id {
+		return header{}, "", refuse("%s says id %v, not %s", tilde(path), given, id)
 	}
 	if !head.has("id") {
 		head.set("id", id)
@@ -247,11 +247,11 @@ func addCmd(raw []string) error {
 		fields = append(fields, field{"after", references})
 	}
 	newTask := header{fields: fields}
-	body = ""
+	taskBody := ""
 	if brief != "" {
-		body = "\n" + brief
+		taskBody = "\n" + brief
 	}
-	if err := writeText(taskPath(spaceName, id), render(newTask, body)); err != nil {
+	if err := writeText(taskPath(spaceName, id), render(newTask, taskBody)); err != nil {
 		return err
 	}
 	head.set("next", json.Number(strconv.Itoa(following)))

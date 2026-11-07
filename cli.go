@@ -218,9 +218,12 @@ func spaceCmd(raw []string) error {
 	return usage("unknown space command %s", raw[0])
 }
 
-// wantsHelp reports whether -h or --help was asked for.
+// wantsHelp reports whether -h or --help was asked for; after -- they are values.
 func wantsHelp(argv []string) bool {
 	for _, arg := range argv {
+		if arg == "--" {
+			return false
+		}
 		if arg == "-h" || arg == "--help" {
 			return true
 		}
