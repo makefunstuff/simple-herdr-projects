@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // holdingStatuses are the statuses whose task takes a running slot.
@@ -45,14 +47,14 @@ func workerTerminal(id string) (string, error) {
 }
 
 // workerPrompt is the first message a worker gets.
-func workerPrompt(spaceName string, t task) string {
+func workerPrompt(t task) string {
 	return fmt.Sprintf(
 		"You are the worker for task %s in space %s.\n"+
 			"Work only in %s on branch %s; do not start other agents.\n"+
 			"The task file is %s: its header is the state, the Markdown below is the brief.\n"+
 			"Report with: shp status %s --progress <0-100> --step \"<what you are doing>\" --left <e.g. 20m>\n"+
 			"If you need the person, run: shp ask %s \"<your question>\" and wait for the answer here.",
-		t.id, spaceName, expand(t.head.text("worktree")), t.head.text("branch"),
+		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"),
 		tilde(t.path), t.id, t.id)
 }
 
@@ -109,7 +111,7 @@ func makeWorktree(spaceHead header, t task) error {
 		return refuse("branch %s already exists", branch)
 	}
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-		return err
+		return wrap(filepath.Dir(worktree), err)
 	}
 	_, err = git("-C", repo, "worktree", "add", "-b", branch, worktree, spaceHead.text("base"))
 	return err
@@ -180,9 +182,19 @@ func start(id string, queued bool) (task, error) {
 	if err != nil {
 		return task{}, err
 	}
+	// An interrupt, as from Ctrl-C, must not leave the task working with no
+	// worker: catch it, let the launch end, then put the task back.
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
 	workspace, err := launch(spaceHead, t)
+	signal.Stop(interrupt)
+	if err == nil && len(interrupt) > 0 {
+		err = refuse("%s: interrupted while starting", id)
+	}
 	if err != nil {
-		release(id, previous, workspace)
+		if undoErr := release(id, previous, workspace); undoErr != nil {
+			fmt.Fprintf(os.Stderr, "shp: %s was not put back to %s: %v\n", id, previous, undoErr)
+		}
 		return task{}, err
 	}
 
@@ -195,7 +207,11 @@ func start(id string, queued bool) (task, error) {
 	if err != nil {
 		return task{}, err
 	}
-	t.head.set("workspace", workspace)
+	var recorded any // null when herdr-app named no space
+	if workspace != "" {
+		recorded = workspace
+	}
+	t.head.set("workspace", recorded)
 	if err := writeText(t.path, render(t.head, t.body)); err != nil {
 		return task{}, err
 	}
@@ -262,12 +278,9 @@ func launch(spaceHead header, t task) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		argv = cfg.words("worker")
+		argv = cfg.words("worker") // config refuses an empty worker
 	}
-	if len(argv) == 0 {
-		return "", refuse("%s has no worker command; set agent or config worker", t.id)
-	}
-	prompt := workerPrompt(t.space, t)
+	prompt := workerPrompt(t)
 	reply, err := herdrApp("space.new", map[string]any{
 		"name":   t.id + " · " + t.head.text("title"),
 		"folder": expand(t.head.text("worktree")),
@@ -300,25 +313,26 @@ func launch(spaceHead header, t task) (string, error) {
 }
 
 // release undoes a failed launch: it closes the space and puts the task back,
-// unless the worker got far enough to ask something. It is best effort, as the
-// launch's own error is the one to report.
-func release(id, previous, workspace string) {
+// unless the worker got far enough to ask something. Closing is best effort:
+// the space may already be gone.
+func release(id, previous, workspace string) error {
 	if workspace != "" {
 		_, _ = herdrApp("space.close", map[string]any{"id": workspace, "confirmed": true})
 	}
 	unlock, err := lock()
 	if err != nil {
-		return
+		return err
 	}
 	defer unlock()
 	t, err := loadTask(id)
 	if err != nil {
-		return
+		return err
 	}
-	if t.head.text("status") == "working" && len(t.head.list("asks")) == 0 {
-		t.head.set("status", previous)
-		_ = writeText(t.path, render(t.head, t.body))
+	if t.head.text("status") != "working" || len(t.head.list("asks")) > 0 {
+		return nil
 	}
+	t.head.set("status", previous)
+	return writeText(t.path, render(t.head, t.body))
 }
 
 func startCmd(raw []string) error {
@@ -327,7 +341,7 @@ func startCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 1 {
-		return usage("usage: shp start ID")
+		return usage("start takes one task id")
 	}
 	t, err := start(a.words[0], false)
 	if err != nil {
@@ -353,7 +367,7 @@ func gatesClear(t task, byID map[string]header) bool {
 
 func tickCmd(raw []string) error {
 	if len(raw) > 0 {
-		return usage("usage: shp tick")
+		return usage("tick takes no arguments")
 	}
 	if _, err := config(); err != nil { // a bad config names its file before tick does anything
 		return err

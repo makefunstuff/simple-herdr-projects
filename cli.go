@@ -18,7 +18,7 @@ func refuse(format string, args ...any) error {
 	return refusal(fmt.Sprintf(format, args...))
 }
 
-// usageError is a command line shp cannot read; it exits 2.
+// usageError is a command line shp cannot read; it exits 2 after the command's usage line.
 type usageError string
 
 func (u usageError) Error() string { return string(u) }
@@ -159,13 +159,13 @@ func herdrApp(command string, payload any) (map[string]any, error) {
 	out, errOut, err := run("herdr-app", "do", command, string(data))
 	reply := map[string]any{}
 	_ = json.Unmarshal([]byte(out), &reply)
-	reported, _ := reply["error"].(string)
-	if err == nil && reported == "" {
+	reported := reply["error"]
+	if err == nil && reported == nil {
 		return reply, nil
 	}
-	message := reported
-	if message == "" {
-		message = reason(errOut, out)
+	message := reason(errOut, out)
+	if reported != nil {
+		message = fmt.Sprint(reported)
 	}
 	return nil, refuse("herdr-app %s: %s", command, message)
 }
@@ -193,7 +193,7 @@ func lastLine(text string) string {
 
 func configCmd(raw []string) error {
 	if len(raw) > 0 {
-		return usage("usage: shp config")
+		return usage("config takes no arguments")
 	}
 	path := filepath.Join(store(), "config.md")
 	if !isFile(path) {
@@ -210,7 +210,7 @@ func configCmd(raw []string) error {
 
 func spaceCmd(raw []string) error {
 	if len(raw) == 0 {
-		return usage("usage: shp space {add} ...")
+		return usage("space needs a command: add")
 	}
 	if raw[0] == "add" {
 		return spaceAdd(raw[1:])

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // main routes a command line to its command.
@@ -48,10 +49,12 @@ func dispatch(argv []string) int {
 	if errors.As(err, &code) {
 		return int(code)
 	}
-	fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 	var bad usageError
 	if errors.As(err, &bad) {
+		usageLine, _, _ := strings.Cut(helpText(argv), "\n\n")
+		fmt.Fprintf(os.Stderr, "%s\nshp: %v\n", usageLine, err)
 		return 2
 	}
+	fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 	return 1
 }

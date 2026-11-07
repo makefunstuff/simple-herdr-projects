@@ -229,14 +229,9 @@ func (f *fixture) gitAt(dir string, args ...string) string {
 	return string(out)
 }
 
-func (f *fixture) git(dir string, args ...string) string {
-	f.t.Helper()
-	return f.gitAt(dir, args...)
-}
-
 func (f *fixture) commonDir(path string) string {
 	f.t.Helper()
-	text := strings.TrimSpace(f.git(path, "rev-parse", "--git-common-dir"))
+	text := strings.TrimSpace(f.gitAt(path, "rev-parse", "--git-common-dir"))
 	if !filepath.IsAbs(text) {
 		text = filepath.Join(path, text)
 	}
@@ -275,11 +270,7 @@ func (f *fixture) shp(stdin string, args ...string) result {
 
 func (f *fixture) ok(args ...string) string {
 	f.t.Helper()
-	got := f.shp("", args...)
-	if got.code != 0 {
-		f.t.Fatalf("shp %v exited %d: %s", args, got.code, got.stderr)
-	}
-	return got.stdout
+	return f.okIn("", args...)
 }
 
 func (f *fixture) okIn(stdin string, args ...string) string {
@@ -847,7 +838,7 @@ worktree: %s
 		f.makeSpace("work")
 		other := f.makeRepo("other")
 		elsewhere := filepath.Join(f.root, "shared-wt")
-		f.git(other, "worktree", "add", "-b", "task/1-other", elsewhere)
+		f.gitAt(other, "worktree", "add", "-b", "task/1-other", elsewhere)
 		f.writeTask("WORK-1", fmt.Sprintf(`---
 id: WORK-1
 title: Elsewhere
@@ -874,7 +865,7 @@ worktree: %s
 		if _, ok := f.header(id)["workspace"]; ok {
 			t.Error("workspace was kept")
 		}
-		if !hasCall(f.calls("app.log"), "do", "space.close") {
+		if !hasCall(f.calls("app.log"), "do", "space.close", `{"confirmed":true,"id":"sp-test"}`) {
 			t.Errorf("no space.close in %v", f.calls("app.log"))
 		}
 	})
@@ -960,6 +951,33 @@ worktree: %s
 		}
 	})
 
+	t.Run("an interrupt during a launch puts the task back", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		id := f.addTask("Interrupted")
+		f.fact("app_slow", true)
+		starting := f.startBackground("start", id)
+		for range 60 {
+			if f.header(id)["status"] == "working" {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := starting.cmd.Process.Signal(os.Interrupt); err != nil {
+			t.Fatal(err)
+		}
+		got := f.waitBackground(starting)
+		if got.code != 1 || !strings.Contains(got.stderr, "interrupted while starting") {
+			t.Errorf("exit %d, %q", got.code, got.stderr)
+		}
+		if status := f.header(id)["status"]; status != "todo" {
+			t.Errorf("status %v", status)
+		}
+		if !hasCall(f.calls("app.log"), "do", "space.close", `{"confirmed":true,"id":"sp-test"}`) {
+			t.Errorf("no space.close in %v", f.calls("app.log"))
+		}
+	})
+
 	t.Run("an ask during a launch stays open", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
@@ -1037,7 +1055,7 @@ worktree: %s
 			t.Errorf("workspace %v", head["workspace"])
 		}
 		worktree := wantFolder
-		if branch := strings.TrimSpace(f.git(worktree, "rev-parse", "--abbrev-ref", "HEAD")); branch != "task/1-add-a-search-box" {
+		if branch := strings.TrimSpace(f.gitAt(worktree, "rev-parse", "--abbrev-ref", "HEAD")); branch != "task/1-add-a-search-box" {
 			t.Errorf("branch %q", branch)
 		}
 		f.ok("status", id, "--progress", "40", "--step", "Writing the box", "--left", "1h")
@@ -1108,7 +1126,7 @@ worktree: %s
 		if got := f.refused("start", id); !strings.Contains(got, "first message was not sent") {
 			t.Errorf("%q", got)
 		}
-		if !hasCall(f.calls("app.log"), "do", "space.close") {
+		if !hasCall(f.calls("app.log"), "do", "space.close", `{"confirmed":true,"id":"sp-test"}`) {
 			t.Errorf("no space.close in %v", f.calls("app.log"))
 		}
 		if status := f.header(id)["status"]; status != "queued" {

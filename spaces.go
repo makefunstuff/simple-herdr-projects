@@ -130,7 +130,7 @@ func spaceAdd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 1 {
-		return usage("usage: shp space add NAME --folder PATH")
+		return usage("space add takes one name")
 	}
 	name := a.words[0]
 	if !spaceName.MatchString(name) {

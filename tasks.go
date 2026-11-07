@@ -168,7 +168,7 @@ func addCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 1 {
-		return usage("usage: shp add TITLE [--space NAME]")
+		return usage("add takes one title")
 	}
 	title := strings.TrimSpace(a.words[0])
 	if title == "" {
@@ -309,7 +309,7 @@ func listCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) > 0 {
-		return usage("usage: shp list [--json] [--space NAME]")
+		return usage("list takes no arguments")
 	}
 	tasks, problems := allTasks()
 	for _, problem := range problems {
@@ -347,7 +347,7 @@ func showCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 1 {
-		return usage("usage: shp show ID [--json]")
+		return usage("show takes one task id")
 	}
 	t, err := loadTask(a.words[0])
 	if err != nil {
@@ -370,7 +370,7 @@ func reportCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 1 {
-		return usage("usage: shp status ID [--progress 0-100] [--step TEXT] [--left TIME]")
+		return usage("status takes one task id")
 	}
 	progressText, hasProgress := a.value("progress")
 	step, hasStep := a.value("step")
@@ -420,7 +420,7 @@ func askCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 2 {
-		return usage("usage: shp ask ID TEXT")
+		return usage("ask takes a task id and a question")
 	}
 	id := a.words[0]
 	text := strings.TrimSpace(a.words[1])
@@ -473,7 +473,7 @@ func sayCmd(raw []string) error {
 		return err
 	}
 	if len(a.words) != 2 {
-		return usage("usage: shp say ID TEXT [--ask ID]")
+		return usage("say takes a task id and a message")
 	}
 	id, text := a.words[0], a.words[1]
 	t, err := loadTask(id)
