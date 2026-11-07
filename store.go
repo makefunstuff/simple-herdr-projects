@@ -443,6 +443,7 @@ var spaceRules = []rule{
 	{"base", isStringOrNil, "a branch"},
 	{"checks", isArgvList, "argv lists"},
 	{"next", isIntOrNil, "a number"},
+	{"herdr_space", isStringOrNil, "an id"},
 }
 
 // checkFields refuses a file whose known fields hold the wrong kind of value.

@@ -187,9 +187,12 @@ func stillAccepted(t task, reviewed string) error {
 	return nil
 }
 
-// cleanUp ends a merged task's terminals and removes its worktree and branch;
-// whatever will not go is kept and named.
+// cleanUp ends a merged task's terminals, removes its worktree and branch,
+// then closes its space; whatever will not go is kept and named. The space
+// goes last: an accept run from its Terminal tab ends with it.
 func cleanUp(t task, repo string) {
+	killTerminals(t.id)
+	defer closeSpace(t.id, t.head.text("workspace"))
 	// A branch on just the reviewed commit is merged, even by a squash git
 	// cannot see; one with newer commits goes only if git agrees.
 	deleteFlag := "-d"
@@ -197,7 +200,6 @@ func cleanUp(t task, repo string) {
 		strings.TrimSpace(head) == t.head.text("reviewed_commit") {
 		deleteFlag = "-D"
 	}
-	killTerminals(t.id)
 	worktree := expand(t.head.text("worktree"))
 	if exists(worktree) {
 		if _, err := git("-C", repo, "worktree", "remove", worktree); err != nil {
@@ -240,7 +242,7 @@ func openPR(t task, spaceHead header) error {
 		}
 		url = lastLine(out)
 	}
-	_, err := update(t.id, func(cur *task) error {
+	t, err := update(t.id, func(cur *task) error {
 		if err := stillAccepted(*cur, reviewed); err != nil {
 			return err
 		}
@@ -250,6 +252,9 @@ func openPR(t task, spaceHead header) error {
 	})
 	if err != nil {
 		return err
+	}
+	if err := openPRTab(t); err != nil {
+		fmt.Fprintf(os.Stderr, "shp: %v; %s has no PR tab\n", err, t.id)
 	}
 	if _, _, err := runIn(worktree, "gh", "pr", "merge", "--auto", "--squash", url); err != nil {
 		fmt.Printf("%s: merging through %s; tick merges it once its checks pass\n", t.id, url)
@@ -355,7 +360,7 @@ func doneCmd(raw []string) error {
 		return usage("done takes one task id")
 	}
 	id := a.words[0]
-	_, err = update(id, func(cur *task) error {
+	t, err := update(id, func(cur *task) error {
 		switch status := cur.head.text("status"); status {
 		case "done":
 			return refuse("%s is done already", id)
@@ -369,7 +374,9 @@ func doneCmd(raw []string) error {
 		return err
 	}
 	killTerminals(id)
+	// Printed first: closing the space may end the shell this runs in.
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
+	closeSpace(id, t.head.text("workspace"))
 	return nil
 }
 
