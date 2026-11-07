@@ -68,8 +68,7 @@ func branchExists(repo, branch string) bool {
 // workerPrompt is the first message a worker gets.
 func workerPrompt(t task) string {
 	return fmt.Sprintf(workerGuide,
-		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"),
-		tilde(t.path), t.id, t.id, t.id, t.id)
+		t.id, t.space, expand(t.head.text("worktree")), t.head.text("branch"), tilde(t.path))
 }
 
 // commonDir is where a checkout's shared git objects live.
@@ -190,6 +189,9 @@ func start(id string, queued bool) (task, error) {
 	}
 	_, spaceHead, _, err := loadSpace(t.space)
 	if err != nil {
+		return task{}, err
+	}
+	if err := needRepo(t.space, spaceHead); err != nil {
 		return task{}, err
 	}
 	// An interrupt, as from Ctrl-C, must not leave the task working with no

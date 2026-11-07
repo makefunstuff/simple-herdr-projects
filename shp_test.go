@@ -448,7 +448,7 @@ func TestSpaceStart(t *testing.T) {
 		for _, want := range []string{"You are the Assistant for the space work", "shp add", "shp start", "shp list"} {
 			wantIn(t, prompt, want)
 		}
-		if !hasCall(f.calls("hc.log"), "label", "t20", "herdr.role=coordinator", "herdr.shp=coordinator") {
+		if !hasCall(f.calls("hc.log"), "label", "t20", "herdr.role=coordinator") {
 			t.Errorf("the Assistant was not labelled: %v", f.calls("hc.log"))
 		}
 	})
@@ -458,7 +458,7 @@ func TestSpaceStart(t *testing.T) {
 		f.makeSpace("work")
 		f.fact("ls.json", map[string]any{"terminals": []any{map[string]any{
 			"address": "t21", "state": "live",
-			"labels": map[string]any{"herdr.role": "coordinator", "herdr.shp": "coordinator", "herdr.space": "sp-repo"},
+			"labels": map[string]any{"herdr.role": "coordinator", "herdr.space": "sp-repo"},
 		}}})
 		out := f.ok("space", "start", "work")
 		wantIn(t, out, "already live in t21")
@@ -467,6 +467,15 @@ func TestSpaceStart(t *testing.T) {
 				t.Errorf("a second Assistant was started: %v", call)
 			}
 		}
+	})
+
+	t.Run("a folder space cannot start a task", func(t *testing.T) {
+		f := newFixture(t)
+		f.shepherdr(map[string]any{"home": f.homeProject()}, roleSettings)
+		f.ok("import")
+		id := strings.TrimSpace(f.ok("add", "a folder task", "--space", "home"))
+		got := f.refused("start", id)
+		wantIn(t, got, "space home is a folder, not a git repo: it has no base")
 	})
 
 	t.Run("every space, including one that is a folder", func(t *testing.T) {

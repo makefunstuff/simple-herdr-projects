@@ -72,7 +72,7 @@ func startCoordinator(name string) error {
 			return err
 		}
 	}
-	alive, err := liveTerminals("herdr.role=coordinator", "herdr.space="+workspace, "herdr.shp=coordinator")
+	alive, err := liveTerminals("herdr.role=coordinator", "herdr.space="+workspace)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func startCoordinator(name string) error {
 		}
 		argv = cfg.words("coordinator")
 	}
-	prompt := fmt.Sprintf(coordinatorGuide, name, tilde(folder), tilde(path), name, name)
+	prompt := fmt.Sprintf(coordinatorGuide, name, tilde(folder), tilde(path))
 	reply, err := herdrApp("tab.new", map[string]any{
 		"name":   "Assistant",
 		"space":  workspace,
@@ -103,7 +103,7 @@ func startCoordinator(name string) error {
 	if terminal == "" {
 		return refuse("herdr-app made no Assistant terminal for space %s", name)
 	}
-	if _, err := hc("label", terminal, "herdr.role=coordinator", "herdr.shp=coordinator"); err != nil {
+	if _, err := hc("label", terminal, "herdr.role=coordinator"); err != nil {
 		return err
 	}
 	if err := deliver(terminal, prompt, name); err != nil {

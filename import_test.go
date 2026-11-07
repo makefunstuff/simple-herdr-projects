@@ -327,6 +327,22 @@ func TestImport(t *testing.T) {
 		}
 	})
 
+	t.Run("a delta run leaves a worker whose worktree is gone", func(t *testing.T) {
+		f := newFixture(t)
+		app, running := f.appProject()
+		f.shepherdr(map[string]any{"app": app}, roleSettings)
+		f.ok("import")
+		if err := os.RemoveAll(running); err != nil {
+			t.Fatal(err)
+		}
+		f.liveOldWorker()
+		out := f.ok("import")
+		wantIn(t, out, "its worktree is gone; its worker is not adopted")
+		if hasCall(f.calls("hc.log"), "label") {
+			t.Errorf("a worker in a gone worktree was adopted: %v", f.calls("hc.log"))
+		}
+	})
+
 	t.Run("a taken name and prefix get another and references follow", func(t *testing.T) {
 		f := newFixture(t)
 		app, _ := f.appProject()
