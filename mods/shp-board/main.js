@@ -1,24 +1,23 @@
 // The board: every task of every machine linked to herdr-core, grouped by machine and status.
-// It reads `shp list --json` every 2 s and runs `shp tick` every 10 s. A row opens the task's
-// Herdr space; Accept asks first and then runs `shp accept --yes`; a task that comes to need
-// the person or be ready toasts once. A machine without shp, or out of reach, gets one quiet line.
+// It reads `shp list --json` every 2 s and runs `shp tick` every 10 s, on each machine apart,
+// so a slow one holds up only its own rows. A row opens the task's Herdr space; Accept asks
+// first and then runs `shp accept --yes`; a task that needs the person or is ready toasts once.
+// A machine without shp, out of reach or not connected gets one quiet line.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { hc, spaces, exec, run, notify, openOverlay, closeOverlay, props, theme, shared } from "herdr";
-import { group, detail, subtitle, fresh, workspace, linkedMachines, tasksOf, listCall, tickCall, acceptCall } from "./board.js";
+import { group, detail, subtitle, fresh, workspace, linkedMachines, tasksOf } from "./board.js";
 
 const POLL = 2000;  // how often the tasks are read
 const TICK = 10000; // how often queued work is started
 const ID_FONT = "JetBrains Mono";
 const caps = (x) => (shared("layout") === "workbench" ? String(x).toUpperCase() : String(x));
-const shp = (call) => exec(call.command, call.args, call.on ? { on: call.on } : undefined);
 const lastLine = (text) => String(text ?? "").trim().split("\n").pop();
 const errorLine = (error) => lastLine(error?.stderr || error?.message || error) || "No shp here, or this machine can't be reached.";
-const machineName = (machine) => machine ?? "This computer";
 
 // A small boxed word, in its colour: "2 need you", "1 ready", ACCEPT.
-function chip(t, id, text, color) {
+function chip(id, text, color) {
   return h_flex().id(id).h(20).flex_none().px(6).gap(5).items_center().whitespace_nowrap().border_1().border_color(color)
     .text_size(10.5).font_semibold().text_color(color).child(div().size(5).flex_none().bg(color)).child(caps(text));
 }
@@ -31,6 +30,9 @@ function bar(t, label, n, color) {
     .child(div().flex_1());
 }
 
+// A place is one machine's share of the board; name null is this computer.
+const newPlace = (name, connected) => ({ name, connected, tasks: [], error: null, read: false, loading: false });
+
 export default class Board extends View {
   init(_props, cx) {
     this.busy = false; // accepting
@@ -40,18 +42,19 @@ export default class Board extends View {
       this.handle.focus();
       return;
     }
-    this.places = [{ name: null, tasks: [], error: null }];
-    this.seen = null;     // null until the first read: opening the board doesn't replay toasts
-    this.loading = false;
+    this.places = [newPlace(null, true)];
+    this.seen = {}; // the toast keys of the tasks that need the person or are ready
     this.refresh(cx);
     cx.timer.every(POLL, (cx) => this.refresh(cx));
-    cx.timer.every(TICK, () => { for (const place of this.places) shp(tickCall(place.name)).catch(() => null); });
+    cx.timer.every(TICK, () => {
+      for (const place of this.places) {
+        if (place.read && !place.error) exec("shp", ["tick"], { on: place.name }).catch(() => null);
+      }
+    });
   }
 
-  // Read every linked machine's tasks at once; they render together when all have answered.
+  // Find the linked machines, then read each one that isn't still answering the last read.
   refresh(cx) {
-    if (this.loading) return;
-    this.loading = true;
     cx.spawn(async (cx) => {
       let linked = [];
       try {
@@ -60,31 +63,44 @@ export default class Board extends View {
       } catch {
         // no herdr-core answer: this computer's tasks are still worth showing
       }
+      this.places = [{ name: null, connected: true }, ...linked].map(({ name, connected }) =>
+        Object.assign(this.places.find((place) => place.name === name) ?? newPlace(name, connected), { connected }));
+      for (const place of this.places) this.load(place, cx);
+      cx.notify();
+    });
+  }
+
+  load(place, cx) {
+    if (place.loading) return;
+    if (!place.connected) {
+      Object.assign(place, { tasks: [], error: "Not connected.", read: true });
+      return;
+    }
+    place.loading = true;
+    cx.spawn(async (cx) => {
       try {
-        this.places = await Promise.all([null, ...linked].map((name) => this.load(name)));
-        const all = this.places.flatMap((place) => place.tasks);
-        const stale = this.places.filter((place) => place.error).map((place) => place.name);
-        const news = fresh(this.seen ?? {}, all, stale);
-        for (const one of news.notices) notify({ title: one.title, body: one.body, level: one.level });
-        this.seen = news.seen;
+        const reply = await exec("shp", ["list", "--json"], { on: place.name });
+        // shp still prints the tasks it could read when another task file is bad.
+        place.tasks = reply.stdout.trim() ? tasksOf(place.name, reply.stdout) : [];
+        place.error = reply.code === 0 ? null : lastLine(reply.stderr) || `shp list exited ${reply.code}`;
+        if (reply.stdout.trim()) this.toast(place);
+      } catch (error) {
+        place.tasks = [];
+        place.error = errorLine(error);
       } finally {
-        this.loading = false;
+        place.loading = false;
+        place.read = true;
         cx.notify();
       }
     });
   }
 
-  async load(machine) {
-    const place = { name: machine, tasks: [], error: null };
-    try {
-      const reply = await shp(listCall(machine));
-      // shp still prints the tasks it could read when another task file is bad.
-      if (reply.stdout.trim()) place.tasks = tasksOf(machine, reply.stdout);
-      if (reply.code !== 0) place.error = lastLine(reply.stderr) || `shp list exited ${reply.code}`;
-    } catch (error) {
-      place.error = errorLine(error);
-    }
-    return place;
+  // Toast what newly needs the person or is ready, on this machine; the first read toasts too,
+  // so work that got there while the board was closed still says so.
+  toast(place) {
+    const news = fresh(this.seen, place.name, place.tasks);
+    for (const one of news.notices) notify({ title: one.title, body: one.body, level: one.level });
+    this.seen = news.seen;
   }
 
   // The row's Accept: confirm first, and say why if shp refuses.
@@ -100,7 +116,7 @@ export default class Board extends View {
     cx.spawn(async (cx) => {
       let refused = null;
       try {
-        const reply = await shp(acceptCall(task));
+        const reply = await exec("shp", ["accept", task.id, "--yes"], { on: task.machine });
         if (reply.code !== 0) refused = lastLine(reply.stderr) || `shp accept exited ${reply.code}`;
       } catch (error) {
         refused = errorLine(error);
@@ -117,10 +133,9 @@ export default class Board extends View {
 
   // One machine: its name when there are several (or it has a reason), then a bar per status.
   place(body, entry, t) {
-    const multi = this.places.length > 1;
-    if (multi || entry.error) {
+    if (this.places.length > 1 || entry.error) {
       body.child(h_flex().h(26).flex_none().mt(6).px(8).gap(8).items_center()
-        .child(div().text_size(10.5).font_semibold().text_color(t.muted).child(caps(machineName(entry.name))))
+        .child(div().text_size(10.5).font_semibold().text_color(t.muted).child(caps(entry.name ?? "This computer")))
         .child(div().flex_1())
         .when(!entry.error, (e) => e.child(div().text_size(10.5).text_color(t.dim).child(String(entry.tasks.length)))));
     }
@@ -145,7 +160,7 @@ export default class Board extends View {
           .child(div().flex_1().min_w(0).truncate().child(String(task.title ?? ""))))
         .when(Boolean(under), (e) => e.child(div().pl(72).min_w(0).truncate().text_size(11).text_color(t.muted).child(under))))
       .when(Boolean(info), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(info)))
-      .when(task.status === "ready", (e) => e.child(chip(t, `accept-${task.machine ?? "here"}-${task.id}`, "Accept", t.accent)
+      .when(task.status === "ready", (e) => e.child(chip(`accept-${task.machine ?? "here"}-${task.id}`, "Accept", t.accent)
         .cursor_pointer().hover((s) => s.bg(t.accent).text_color(t.accent_foreground)).on_mouse_down("left", (ev, cx) => cx.stop_propagation())
         .on_click((ev, cx) => { cx.stop_propagation(); this.ask(task); })));
   }
@@ -153,14 +168,12 @@ export default class Board extends View {
   // The confirm dialog before accepting, as px-confirm draws it: Enter accepts, Esc cancels.
   confirm(task, t) {
     const cancel = () => closeOverlay(props().overlay);
-    const yes = (cx) => { if (!this.busy) this.accept(task, cx); };
-    const button = (id, label, bg, fg, onClick) => h_flex().id(id).h(32).px(14).items_center().border_1()
-      .border_color(id === "no" ? t.input : bg).bg(bg).text_color(fg)
-      .when(Boolean(onClick), (e) => e.cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick)).child(caps(label));
+    const button = (id, label, bg, fg, border, onClick) => h_flex().id(id).h(32).px(14).items_center().border_1()
+      .border_color(border).bg(bg).text_color(fg).cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick).child(caps(label));
     return v_flex().id("shp-board-confirm").track_focus(this.handle).size_full().min_h(0).p(18).gap(12).bg(t.popover)
       .text_color(t.foreground).text_size(13)
       .on_key_down((ev, cx) => {
-        if (ev.key === "enter") yes(cx);
+        if (ev.key === "enter") this.accept(task, cx);
         else if (ev.key === "escape") cancel();
         else return;
         cx.stop_propagation();
@@ -171,9 +184,8 @@ export default class Board extends View {
       .child(div().flex_1().min_h(0).text_color(t.muted).child(`${task.title} — runs its space's checks, then merges its branch or pull request.`))
       .when(Boolean(this.error), (e) => e.child(div().text_size(11).text_color(t.blocked).child(this.error)))
       .child(h_flex().justify_end().gap(8).text_size(12)
-        .child(button("no", "Cancel", t.raised, t.foreground, cancel))
-        .child(button("yes", this.busy ? "Accepting…" : "Accept", t.solid, t.solid_foreground,
-          this.busy ? null : (ev, cx) => yes(cx))));
+        .child(button("no", "Cancel", t.raised, t.foreground, t.input, cancel))
+        .child(button("yes", this.busy ? "Accepting…" : "Accept", t.solid, t.solid_foreground, t.solid, (ev, cx) => this.accept(task, cx))));
   }
 
   render() {
@@ -186,15 +198,16 @@ export default class Board extends View {
     const body = v_flex().id("shp-board-list").flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(10);
     for (const place of this.places) this.place(body, place, t);
     if (!tasks.length && this.places.every((place) => !place.error)) {
-      body.child(div().px(2).py(10).text_size(11).text_color(t.dim).child(this.seen ? "No tasks yet." : "Reading tasks…"));
+      const read = this.places.every((place) => place.read);
+      body.child(div().px(2).py(10).text_size(11).text_color(t.dim).child(read ? "No tasks yet." : "Reading tasks…"));
     }
     return v_flex().id("shp-board").size_full().min_h(0).rounded(0).overflow_hidden().bg(t.surface).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child(caps("Board")))
         .child(div().flex_1())
-        .when(needs > 0, (e) => e.child(chip(t, "shp-needs", `${needs} need you`, t.blocked)))
-        .when(ready > 0, (e) => e.child(chip(t, "shp-ready", `${ready} ready`, t.done)))
+        .when(needs > 0, (e) => e.child(chip("shp-needs", `${needs} need you`, t.blocked)))
+        .when(ready > 0, (e) => e.child(chip("shp-ready", `${ready} ready`, t.done)))
         .child(div().text_size(11).text_color(t.dim).child(`${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`)))
       .child(body);
   }

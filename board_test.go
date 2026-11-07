@@ -57,12 +57,16 @@ eq(board.group([]), [], "no tasks, no sections");
 
 func TestBoardRowWords(t *testing.T) {
 	boardJS(t, `
-eq(board.detail({ progress: 40, left: "20m" }), "40% · 20m left", "progress and left");
-eq(board.detail({ progress: 0 }), "0%", "zero progress shows");
-eq(board.detail({}), "", "nothing to say");
+eq(board.detail({ status: "working", progress: 40, left: "20m" }), "40% · 20m left", "progress and left");
+eq(board.detail({ status: "working", progress: 0 }), "0%", "zero progress shows");
+eq(board.detail({ status: "working" }), "", "nothing to say");
+eq(board.detail({ status: "queued" }), "Queued", "queued says so beside to do");
+eq(board.detail({}), "To do", "a task without a status is to do");
+eq(board.detail({ status: "merging", progress: 100 }), "Merging · 100%", "merging says so beside working");
 eq(board.subtitle({ status: "needs", asks: [{ text: "Which port?" }], step: "Running tests" }), "Which port?", "the open question");
 eq(board.subtitle({ status: "working", asks: [{ text: "Which port?" }], step: "Running tests" }), "Running tests", "else the step");
 eq(board.subtitle({ status: "needs", asks: [] }), "", "no question, nothing");
+eq(board.subtitle({ status: "needs" }), "", "no asks key, nothing");
 `)
 }
 
@@ -80,33 +84,22 @@ eq(ready.body, "Done", "a ready task says its step");
 eq(ready.level, "success", "ready is a success");
 eq(board.notice({ id: "A-3", status: "working" }), null, "working does not toast");
 
-const first = board.fresh({}, [{ id: "A-1", status: "ready", title: "Fix" }]);
+const first = board.fresh({}, null, [{ id: "A-1", status: "ready", title: "Fix" }]);
 eq(first.notices.length, 1, "first sighting toasts");
 eq(first.seen, { "/A-1:ready": true }, "the key is now seen");
-const again = board.fresh(first.seen, [{ id: "A-1", status: "ready", title: "Fix" }]);
+const again = board.fresh(first.seen, null, [{ id: "A-1", status: "ready", title: "Fix" }]);
 eq(again.notices.length, 0, "staying ready does not toast again");
-const left = board.fresh(again.seen, [{ id: "A-1", status: "working" }]);
+const left = board.fresh(again.seen, null, [{ id: "A-1", status: "working" }]);
 eq(left.seen, {}, "leaving ready forgets the key");
-const back = board.fresh(left.seen, [{ id: "A-1", status: "ready", title: "Fix" }]);
+const back = board.fresh(left.seen, null, [{ id: "A-1", status: "ready", title: "Fix" }]);
 eq(back.notices.length, 1, "becoming ready again toasts");
 
-const both = board.fresh({}, [
-  { id: "A-1", status: "ready", machine: "mac", title: "One" },
-  { id: "A-1", status: "ready", title: "Two" },
-]);
-eq(both.notices.length, 2, "the same id on two machines toasts twice");
-
-const remote = [{ id: "R-1", status: "needs", machine: "mac", title: "Remote", asks: [{ text: "Which?" }] }];
-const seenRemote = board.fresh({}, remote).seen;
-const failed = board.fresh(seenRemote, [], ["mac"]);
-eq(failed.notices.length, 0, "a failed read toasts nothing");
-eq(failed.seen, seenRemote, "a failed machine keeps its seen keys");
-const recovered = board.fresh(failed.seen, remote, []);
-eq(recovered.notices.length, 0, "recovery does not toast an unchanged task again");
-const gone = board.fresh(recovered.seen, [], []);
-eq(gone.seen, {}, "a machine that answers drops the tasks that are gone");
-eq(board.fresh({ "/A-1:needs": true, "mac/B-2:ready": true }, [], [null]).seen,
-  { "/A-1:needs": true }, "a failed local read keeps only local keys");
+const here = board.fresh({}, null, [{ id: "A-1", status: "ready", title: "Two" }]);
+const both = board.fresh(here.seen, "mac", [{ id: "A-1", status: "ready", machine: "mac", title: "One" }]);
+eq(both.notices.length, 1, "the same id on another machine toasts too");
+eq(both.seen, { "/A-1:ready": true, "mac/A-1:ready": true }, "and both keys are kept");
+eq(board.fresh(both.seen, "mac", []).seen, { "/A-1:ready": true }, "a machine's listing replaces only its own keys");
+eq(board.fresh(both.seen, null, []).seen, { "mac/A-1:ready": true }, "this computer's too");
 `)
 }
 
@@ -121,19 +114,9 @@ eq(board.tasksOf(null, '[{"id":"A-1"}]')[0].machine, null, "this computer is nul
 let threw = false;
 try { board.tasksOf(null, "{}"); } catch { threw = true; }
 ok(threw, "a listing that is not a list is refused");
-eq(board.linkedMachines('{"machines":[{"name":"mac","target":"mac"},{"name":"sandbox","target":"x","temporary":true}]}'),
-  ["mac"], "linked machines, temporary sandboxes left out");
+eq(board.linkedMachines('{"machines":[{"name":"mac","state":"connected"},{"name":"nas","state":"disconnected"},{"name":"sandbox","state":"connected","temporary":true}]}'),
+  [{ name: "mac", connected: true }, { name: "nas", connected: false }], "linked machines, temporary sandboxes left out");
 eq(board.linkedMachines('{"machines":[]}'), [], "no machines linked");
-`)
-}
-
-func TestBoardCommands(t *testing.T) {
-	boardJS(t, `
-eq(board.listCall(null), { command: "shp", args: ["list", "--json"], on: null }, "list here");
-eq(board.listCall("mac"), { command: "shp", args: ["list", "--json"], on: "mac" }, "list on a machine");
-eq(board.tickCall("mac"), { command: "shp", args: ["tick"], on: "mac" }, "tick on a machine");
-eq(board.acceptCall({ id: "APP-1" }), { command: "shp", args: ["accept", "APP-1", "--yes"], on: null }, "accept here");
-eq(board.acceptCall({ id: "APP-1", machine: "mac" }), { command: "shp", args: ["accept", "APP-1", "--yes"], on: "mac" }, "accept on a machine");
 `)
 }
 
@@ -159,6 +142,9 @@ func TestBoardPanel(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed; the board's rules are JavaScript")
+	}
+	if exec.Command(node, "-e", `process.exit(require("node:module").registerHooks ? 0 : 1)`).Run() != nil {
+		t.Skip("node is older than 22.15; the fake Herdr modules need module.registerHooks")
 	}
 	mod, err := filepath.Abs("mods/shp-board")
 	if err != nil {

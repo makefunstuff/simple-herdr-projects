@@ -22,5 +22,3 @@ export function element() {
 }
 
 export const div = element;
-export const svg = element;
-export const image = element;

@@ -27,19 +27,25 @@ const reset = () => {
   for (const list of Object.values(calls)) list.length = 0;
 };
 
-const fakeCx = () => ({
+const fakeCx = () => {
+  const cx = {
   pending: [],
   notified: 0,
   notify() { this.notified++; },
   spawn(fn) { this.pending.push(Promise.resolve().then(() => fn(this))); },
-  timer: { every() {}, after() {} },
+  timers: [],
+  timer: { every(ms, fn) { this.owner.timers.push({ ms, fn }); } },
   focus_handle: () => ({ focus() {} }),
   stop_propagation() {},
-});
-const settle = async (cx) => {
-  await Promise.all(cx.pending);
-  cx.pending.length = 0;
+  };
+  cx.timer.owner = cx;
+  return cx;
 };
+// Wait for every spawned task, and the tasks those spawn.
+const settle = async (cx) => {
+  while (cx.pending.length) await Promise.all(cx.pending.splice(0));
+};
+const tick = () => new Promise((done) => setTimeout(done, 0));
 
 // The panel, started as Herdr starts it.
 const startBoard = async () => {
@@ -78,19 +84,32 @@ const ready = { id: "A-1", title: "Fix login", status: "ready" };
 
 // Every linked machine is read with --on, temporary sandboxes aside; the first read is what
 // tells the person a task needs them or is ready.
-reset();
-state.machines = JSON.stringify({ machines: [{ name: "mac", target: "mac" }, { name: "sandbox", target: "sandbox", temporary: true }] });
-state.exec = async (_command, _args, options) => options?.on === "mac"
+const listings = async (_command, _args, options) => options?.on === "mac"
   ? { code: 0, stdout: JSON.stringify([{ id: "M-1", title: "On the mac", status: "ready" }]), stderr: "" }
   : { code: 0, stdout: JSON.stringify([{ id: "A-1", title: "Here", status: "needs", asks: [{ id: "q", text: "Which port?", time: "t" }] }]), stderr: "" };
+reset();
+state.machines = JSON.stringify({ machines: [
+  { name: "mac", state: "connected" },
+  { name: "nas", state: "disconnected" },
+  { name: "sandbox", state: "connected", temporary: true },
+] });
+state.exec = listings;
 const first = await startBoard();
 eq(calls.hc, [["machine", "ls", "--json"]], "linked machines come from hc machine ls");
-eq(first.board.places.map((p) => p.name), [null, "mac"], "this computer and its linked machines");
-eq(calls.exec.map((c) => c.on), [null, "mac"], "each read goes to its machine");
+eq(first.board.places.map((p) => p.name), [null, "mac", "nas"], "this computer and its linked machines");
+eq(calls.exec.map((c) => [c.args, c.on]), [[["list", "--json"], null], [["list", "--json"], "mac"]], "each connected machine is read on itself");
+eq(first.board.places[2].error, "Not connected.", "a machine that is not connected says one line, unasked");
 eq(calls.notices.length, 2, "needs you and ready toast on the first read");
 eq(calls.notices.map((n) => n.title).sort(), ["A-1 needs you", "M-1 on mac is ready"], "the toast titles");
 eq(calls.notices.find((n) => n.title.startsWith("A-1"))?.body, "Which port?", "a need says its question");
 ok(texts(first.board.render()).includes("Needs you"), "the panel lists the Needs you section");
+eq(first.cx.timers.map((one) => one.ms), [2000, 10000], "it reads every 2 s and ticks every 10 s");
+
+// The tick starts queued work on each machine that answered, and nowhere else.
+calls.exec.length = 0;
+first.cx.timers[1].fn(first.cx);
+await tick();
+eq(calls.exec.map((c) => [c.args, c.on]), [[["tick"], null], [["tick"], "mac"]], "tick runs on the machines that answered");
 
 // Nothing new: no second toast.
 calls.notices.length = 0;
@@ -100,17 +119,34 @@ eq(calls.notices.length, 0, "an unchanged task does not toast again");
 
 // A machine out of reach keeps the keys of what it had: its tasks do not toast again when
 // it answers.
-state.exec = async () => ({ code: 1, stdout: "", stderr: "no shp on mac\n" });
+state.exec = async (_command, _args, options) => options?.on === "mac" ? { code: 1, stdout: "", stderr: "no shp on mac\n" } : listings(_command, _args, options);
 first.board.refresh(first.cx);
 await settle(first.cx);
 eq(first.board.places[1].error, "no shp on mac", "the failed machine says one line");
 eq(calls.notices.length, 0, "a failed read toasts nothing");
-state.exec = async (_command, _args, options) => options?.on === "mac"
-  ? { code: 0, stdout: JSON.stringify([{ id: "M-1", title: "On the mac", status: "ready" }]), stderr: "" }
-  : { code: 0, stdout: JSON.stringify([{ id: "A-1", title: "Here", status: "needs", asks: [{ id: "q", text: "Which port?", time: "t" }] }]), stderr: "" };
+calls.exec.length = 0;
+first.cx.timers[1].fn(first.cx);
+await tick();
+eq(calls.exec.map((c) => c.on), [null], "and gets no tick");
+state.exec = listings;
 first.board.refresh(first.cx);
 await settle(first.cx);
 eq(calls.notices.length, 0, "recovery does not toast the same tasks again");
+
+// A machine that never answers holds up only its own rows: this computer's tasks show and toast.
+reset();
+state.machines = JSON.stringify({ machines: [{ name: "mac", state: "connected" }] });
+state.exec = async (command, args, options) => options?.on === "mac" ? new Promise(() => {}) : listings(command, args, options);
+const stalled = fakeCx();
+const slow = Object.create(Board.prototype);
+Board.prototype.init.call(slow, {}, stalled);
+for (let i = 0; i < 5; i++) await tick();
+eq(slow.places[0].tasks.map((task) => task.id), ["A-1"], "this computer's tasks show while the mac is silent");
+eq(calls.notices.map((n) => n.title), ["A-1 needs you"], "and toast");
+calls.exec.length = 0;
+slow.refresh(stalled);
+for (let i = 0; i < 5; i++) await tick();
+eq(calls.exec.map((c) => c.on), [null], "the next poll reads this computer again, not the silent mac");
 
 // Accept asks first and runs nothing until the person says yes.
 reset();
@@ -128,9 +164,10 @@ const releases = [];
 state.exec = () => new Promise((done) => { releases.push(done); });
 const accepting = fakeCx();
 calls.exec.length = 0;
-dialog.accept(ready, accepting);
-dialog.accept(ready, accepting);
-await new Promise((done) => setTimeout(done, 0));
+const yes = () => find(dialog.render(), "yes").calls.on_click[0][0];
+yes()({}, accepting);
+yes()({}, accepting);
+await tick();
 eq(calls.exec.length, 1, "a second click runs no second accept");
 eq(dialog.busy, true, "accepting while it runs");
 for (const release of releases) release({ code: 0, stdout: "", stderr: "" });
@@ -179,12 +216,6 @@ eq(calls.overlays.at(-1).props.accept, ready, "the dialog is about that task");
 state.spaces = [];
 const bare = rows.row({ id: "Z-9", title: "Not started", status: "ready" }, theme());
 ok(!bare.calls.on_click, "a row with no space has no click");
-
-// The dialog's button works while idle and takes no click while accepting.
-const idle = startDialog(ready);
-ok(Boolean(find(idle.render(), "yes").calls.on_click?.[0]?.[0]), "the dialog's Accept works while idle");
-idle.busy = true;
-ok(!find(idle.render(), "yes").calls.on_click, "and takes no click while accepting");
 
 // The keyboard works as in px-confirm: Esc cancels, Enter accepts.
 reset();

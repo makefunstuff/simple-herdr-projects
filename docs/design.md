@@ -55,7 +55,7 @@ Accept needs ready, `blocking: 0` and `reviewed_commit` = HEAD; a newer commit r
 
 - `space add` ensures the repo's Herdr space, records `herdr_space`. A task's workspace: worktree folder, name `<ID> · <title>`; Herdr nests it under the first space at the checkout. Done removes it after unlabelling terminals.
 - Tabs: Chat, Terminal, Review (after a round, kept with its report), Files, Changes, PR (with one); the last three are `px-files|px-changes|px-pr` mods or shells.
-- Board: `shp-board`, reading `shp list --json` every 2 s, calling `shp tick` every 10 s: counts, rows, open a workspace, confirm before `accept --yes`, one toast per need or ready. No layouts, sidebar or installer; `shp` writes only its store, spaces and tabs.
+- Board: `shp-board`, reading `shp list --json` every 2 s, calling `shp tick` every 10 s: counts, rows, open a workspace, confirm before `accept --yes`, one toast per need or ready. It reads and acts on every machine `hc machine ls` lists through Herdr's `--on`, grouped by machine; one without shp or out of reach shows one line. No layouts, sidebar or installer; `shp` writes only its store, spaces and tabs.
 
 ## 7. Phone
 

@@ -4,7 +4,7 @@
 export const state = {
   props: {},      // props() for the copy under test
   spaces: [],     // spaces() the rows see
-  machines: [],   // `hc machine ls --json`
+  machines: '{"machines":[]}', // `hc machine ls --json`
   exec: async () => ({ code: 0, stdout: "[]", stderr: "" }), // exec() answers
 };
 
@@ -12,7 +12,6 @@ export const calls = { exec: [], hc: [], runs: [], notices: [], overlays: [], cl
 
 export const props = () => state.props;
 export const spaces = () => state.spaces;
-export const machines = () => [];
 export const shared = () => null;
 export const theme = () => new Proxy({}, { get: () => "#000000" });
 

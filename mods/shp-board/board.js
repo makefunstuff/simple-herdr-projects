@@ -1,5 +1,5 @@
 // The board's rules, apart from Herdr so node can test them: how tasks group, what a row
-// says, when a task earns a toast, and the shp commands that read and change them.
+// says, when a task earns a toast, and which machines to read.
 
 export const SECTIONS = [
   { key: "needs", label: "Needs you", color: "blocked", statuses: ["needs"] },
@@ -9,6 +9,9 @@ export const SECTIONS = [
   { key: "done", label: "Done", color: "dim", statuses: ["done"] },
   { key: "other", label: "Other", color: "dim", statuses: [] },
 ];
+
+// The design's words for the statuses that share a section with another.
+const WORDS = { todo: "To do", queued: "Queued", merging: "Merging" };
 
 // group puts each task under the one section for its status; unknown statuses stay visible
 // under Other, and empty sections are left out.
@@ -22,17 +25,20 @@ export function group(tasks) {
   return sections.filter((section) => section.tasks.length > 0);
 }
 
-// detail is a row's right-hand words: how far the work is and what is left.
+// detail is a row's right-hand words: a status its section doesn't say, how far the work
+// is and what is left.
 export function detail(task) {
   const parts = [];
-  if (task.progress !== undefined && task.progress !== null) parts.push(`${task.progress}%`);
+  const word = WORDS[task.status ?? "todo"];
+  if (word) parts.push(word);
+  if (task.progress != null) parts.push(`${task.progress}%`);
   if (task.left) parts.push(`${task.left} left`);
   return parts.join(" · ");
 }
 
 // subtitle is a row's second line: the open question, else the worker's step.
 export function subtitle(task) {
-  const ask = (task.asks ?? [])[0];
+  const ask = task.asks?.[0];
   if (task.status === "needs" && ask?.text) return String(ask.text);
   return task.step ? String(task.step) : "";
 }
@@ -51,15 +57,13 @@ export function notice(task) {
   };
 }
 
-// fresh returns the notices not seen before, and the keys of the tasks that have one now:
-// a task keeps its key while it stays needs or ready, so it toasts once. A machine whose
-// listing failed (`stale`) keeps its keys: the same task must not toast again when it returns.
-export function fresh(seen, tasks, stale = []) {
-  const now = {};
-  for (const machine of stale) {
-    const prefix = `${machine ?? ""}/`;
-    for (const key of Object.keys(seen)) if (key.startsWith(prefix)) now[key] = true;
-  }
+// fresh takes one machine's new listing and returns the notices not seen before, and the
+// seen keys with that machine's replaced: a task keeps its key while it stays needs or
+// ready, so it toasts once. Other machines' keys stay, so a machine that fails a read and
+// comes back does not toast its unchanged tasks again.
+export function fresh(seen, machine, tasks) {
+  const prefix = `${machine ?? ""}/`;
+  const now = Object.fromEntries(Object.keys(seen).filter((key) => !key.startsWith(prefix)).map((key) => [key, true]));
   const notices = [];
   for (const task of tasks) {
     const one = notice(task);
@@ -70,11 +74,12 @@ export function fresh(seen, tasks, stale = []) {
   return { notices, seen: now };
 }
 
-// linkedMachines names every machine herdr-core knows, from `hc machine ls --json`, apart from
-// the temporary sandboxes agents add for themselves.
+// linkedMachines lists every machine herdr-core knows, from `hc machine ls --json`, apart
+// from the temporary sandboxes agents add for themselves.
 export function linkedMachines(text) {
   const reply = JSON.parse(text);
-  return (reply.machines ?? []).filter((machine) => !machine.temporary).map((machine) => machine.name);
+  return (reply.machines ?? []).filter((machine) => !machine.temporary)
+    .map((machine) => ({ name: machine.name, connected: machine.state === "connected" }));
 }
 
 // tasksOf adds the machine a listing came from to each task `shp list --json` returns.
@@ -91,9 +96,3 @@ export function workspace(task, spaces) {
   return spaces.find((space) => (space.machine ?? null) === machine
     && (space.name === `${task.id} · ${task.title}` || Boolean(id) && (space.id === id || space.id.endsWith(`/${id}`)))) ?? null;
 }
-
-// The shp commands the board runs, on the task's or machine's own computer (null: this one).
-// Accept passes --yes: the board asks first.
-export const listCall = (machine) => ({ command: "shp", args: ["list", "--json"], on: machine ?? null });
-export const tickCall = (machine) => ({ command: "shp", args: ["tick"], on: machine ?? null });
-export const acceptCall = (task) => ({ command: "shp", args: ["accept", task.id, "--yes"], on: task.machine ?? null });
