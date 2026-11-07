@@ -28,7 +28,7 @@ Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status
 
 ## 3. CLI
 
-`shp`: one stdlib-only Python 3 file over `hc` and `herdr-app`. Commands are the role lists above plus `space add`, `list`, `show`, `tick`, `ready --summary/--proof`, `import`, `config`. `list` shows id, status, title, progress and step or asks.
+`shp`: one Go binary, standard library only, over `hc` and `herdr-app`. Commands are the role lists above plus `space add`, `list`, `show`, `tick`, `ready --summary/--proof`, `import`, `config`. `list` shows id, status, title, progress and step or asks.
 
 `--json` uses header keys. Exit 0 done, 1 refused (why on stderr), 2 bad usage; refusals say what would move them. `accept` confirms unless `--yes`; board and phone confirm first. `config` prints the file.
 

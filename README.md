@@ -19,6 +19,15 @@ It keeps the ideas that work (one coordinator per project, tasks with a brief an
 
 Early design. See [`docs/design.md`](docs/design.md).
 
+## Build
+
+Go 1.27, standard library only.
+
+```
+go build -o shp .
+go test ./...
+```
+
 ## Credits
 
 The concepts follow [Shepherdr](https://github.com/eliasstravik/shepherdr) (MIT). This is a separate, from-scratch implementation.
