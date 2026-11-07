@@ -967,7 +967,7 @@ worktree: %s
 			t.Fatal(err)
 		}
 		got := f.waitBackground(starting)
-		if got.code != 1 || !strings.Contains(got.stderr, "interrupted while starting") {
+		if got.code != 130 || !strings.Contains(got.stderr, "interrupted while starting") {
 			t.Errorf("exit %d, %q", got.code, got.stderr)
 		}
 		if status := f.header(id)["status"]; status != "todo" {
@@ -975,6 +975,35 @@ worktree: %s
 		}
 		if !hasCall(f.calls("app.log"), "do", "space.close", `{"confirmed":true,"id":"sp-test"}`) {
 			t.Errorf("no space.close in %v", f.calls("app.log"))
+		}
+	})
+
+	t.Run("an interrupt stops tick before it starts the next task", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		first := f.addTask("First", "--status", "queued")
+		second := f.addTask("Second", "--status", "queued")
+		f.fact("app_slow", true)
+		ticking := f.startBackground("tick")
+		for range 60 {
+			if f.header(first)["status"] == "working" {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := ticking.cmd.Process.Signal(os.Interrupt); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.waitBackground(ticking); got.code != 130 {
+			t.Errorf("exit %d, %q", got.code, got.stderr)
+		}
+		if launches := countLaunches(f.calls("app.log")); launches != 1 {
+			t.Errorf("launches %d", launches)
+		}
+		for _, id := range []string{first, second} {
+			if status := f.header(id)["status"]; status != "queued" {
+				t.Errorf("%s status %v", id, status)
+			}
 		}
 	})
 

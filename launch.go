@@ -178,22 +178,27 @@ func start(id string, queued bool) (task, error) {
 	if err != nil {
 		return task{}, err
 	}
+	// An interrupt, as from Ctrl-C, must not leave the task working with no
+	// worker: hold it until the launch ends, put the task back, then stop shp.
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(interrupt)
 	t, previous, err := claim(id, queued)
 	if err != nil {
 		return task{}, err
 	}
-	// An interrupt, as from Ctrl-C, must not leave the task working with no
-	// worker: catch it, let the launch end, then put the task back.
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
 	workspace, err := launch(spaceHead, t)
-	signal.Stop(interrupt)
-	if err == nil && len(interrupt) > 0 {
+	interrupted := len(interrupt) > 0
+	if interrupted {
 		err = refuse("%s: interrupted while starting", id)
 	}
 	if err != nil {
 		if undoErr := release(id, previous, workspace); undoErr != nil {
 			fmt.Fprintf(os.Stderr, "shp: %s was not put back to %s: %v\n", id, previous, undoErr)
+		}
+		if interrupted {
+			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
+			os.Exit(130) // a stopped tick starts nothing more
 		}
 		return task{}, err
 	}

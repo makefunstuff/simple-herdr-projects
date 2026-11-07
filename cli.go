@@ -160,6 +160,9 @@ func herdrApp(command string, payload any) (map[string]any, error) {
 	reply := map[string]any{}
 	_ = json.Unmarshal([]byte(out), &reply)
 	reported := reply["error"]
+	if reported == "" {
+		reported = nil // an empty error is no error
+	}
 	if err == nil && reported == nil {
 		return reply, nil
 	}
