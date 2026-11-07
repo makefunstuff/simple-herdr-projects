@@ -69,7 +69,7 @@ func reviewCmd(raw []string) error {
 		return err
 	}
 	worktree := expand(t.head.text("worktree"))
-	if err := clean(worktree); err != nil {
+	if err := clean(worktree, true); err != nil {
 		return err
 	}
 	head, err := gitHead(worktree)
@@ -166,7 +166,7 @@ func reviewedCmd(raw []string) error {
 		return err
 	}
 	worktree := expand(t.head.text("worktree"))
-	if err := clean(worktree); err != nil {
+	if err := clean(worktree, true); err != nil {
 		return err
 	}
 	head, err := gitHead(worktree)
@@ -196,15 +196,16 @@ func recordRound(t task, round int, head, report string) error {
 	if err != nil {
 		return err
 	}
+	atOrAbove := counts[:slices.Index(levels, cfg.text("must_fix"))+1]
 	blocking := 0
-	for i := range slices.Index(levels, cfg.text("must_fix")) + 1 {
-		blocking += counts[i]
+	for _, n := range atOrAbove {
+		blocking += n
 	}
 	kept := filepath.Join(filepath.Dir(t.path), fmt.Sprintf("%s.review-%d.md", t.id, round))
-	_, err = update(t.id, func(t *task) error {
-		t.head.set("review", json.Number(strconv.Itoa(round)))
-		t.head.set("reviewed_commit", head)
-		t.head.set("blocking", json.Number(strconv.Itoa(blocking)))
+	_, err = update(t.id, func(cur *task) error {
+		cur.head.set("review", json.Number(strconv.Itoa(round)))
+		cur.head.set("reviewed_commit", head)
+		cur.head.set("blocking", json.Number(strconv.Itoa(blocking)))
 		return writeText(kept, text)
 	})
 	if err != nil {
@@ -254,19 +255,19 @@ func readyCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
-	t, err = update(t.id, func(t *task) error {
-		if status := t.head.text("status"); status != "working" {
-			return refuse("%s is %s; only working tasks get ready", t.id, status)
+	t, err = update(t.id, func(cur *task) error {
+		if status := cur.head.text("status"); status != "working" {
+			return refuse("%s is %s; only working tasks get ready", cur.id, status)
 		}
-		if err := reviewedNow(*t, head); err != nil {
+		if err := reviewedNow(*cur, head); err != nil {
 			return err
 		}
-		t.head.set("status", "ready")
+		cur.head.set("status", "ready")
 		if summary, ok := a.value("summary"); ok {
-			t.head.set("summary", summary)
+			cur.head.set("summary", summary)
 		}
 		if proof, ok := a.value("proof"); ok {
-			t.head.set("proof", proof)
+			cur.head.set("proof", proof)
 		}
 		return nil
 	})
@@ -299,9 +300,14 @@ func gitHead(dir string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// clean refuses a checkout with changes git would commit.
-func clean(dir string) error {
-	out, err := git("-C", dir, "status", "--porcelain", "--untracked-files=no")
+// clean refuses a checkout with uncommitted changes, counting untracked files
+// when asked: they would stay out of a review and block a worktree's removal.
+func clean(dir string, untracked bool) error {
+	mode := "--untracked-files=no"
+	if untracked {
+		mode = "--untracked-files=normal"
+	}
+	out, err := git("-C", dir, "status", "--porcelain", mode)
 	if err != nil {
 		return err
 	}

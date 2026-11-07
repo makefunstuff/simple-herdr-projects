@@ -370,6 +370,17 @@ func TestAccept(t *testing.T) {
 		wantField(t, f.header(id), "status", "ready")
 	})
 
+	t.Run("an untracked file in the worktree keeps it ready", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		id, worktree := f.readyTask("Search box")
+		if err := os.WriteFile(filepath.Join(worktree, "notes.txt"), []byte("stray\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		wantIn(t, f.refused("accept", id, "--yes"), "uncommitted changes")
+		wantField(t, f.header(id), "status", "ready")
+	})
+
 	t.Run("a main checkout on another branch refuses", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
@@ -428,19 +439,17 @@ func TestAccept(t *testing.T) {
 		wantField(t, f.header(id), "status", "working")
 	})
 
-	t.Run("a commit made during accept is not merged", func(t *testing.T) {
+	t.Run("a commit made during accept stops it", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work", "--checks", `[["sh", "-c", "echo late > late.txt && git add late.txt && git commit -qm late"]]`)
-		id, worktree := f.readyTask("Search box")
-		reviewed := f.head(worktree)
-		f.ok("accept", id, "--yes")
-		f.gitAt(f.repo, "merge-base", "--is-ancestor", reviewed, "main")
-		if exists(filepath.Join(f.repo, "late.txt")) {
-			t.Error("the unreviewed commit was merged")
+		id, _ := f.readyTask("Search box")
+		main := f.head(f.repo)
+		wantIn(t, f.refused("accept", id, "--yes"), "got a commit while its checks ran")
+		if f.head(f.repo) != main {
+			t.Error("main moved")
 		}
-		if branches := f.gitAt(f.repo, "branch", "--list", fmt.Sprint(f.header(id)["branch"])); branches == "" {
-			t.Error("the branch with the unreviewed commit was deleted")
-		}
+		wantIn(t, f.refused("accept", id, "--yes"), "it is working again")
+		wantField(t, f.header(id), "status", "working")
 	})
 
 	t.Run("a merge kills the task's terminals", func(t *testing.T) {
@@ -657,5 +666,12 @@ func TestDoneAndReopen(t *testing.T) {
 		if got, want := f.head(worktree+"-2"), f.head(f.repo); got != want {
 			t.Errorf("fresh worktree on %s, want %s", got, want)
 		}
+
+		f.commit(worktree+"-2", "again.txt", "again\n")
+		f.ok("review", id)
+		f.ok("ready", id)
+		f.ok("accept", id, "--yes")
+		f.ok("reopen", id)
+		wantField(t, f.header(id), "branch", branch+"-2")
 	})
 }

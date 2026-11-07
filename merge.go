@@ -34,7 +34,7 @@ func acceptCmd(raw []string) error {
 		return err
 	}
 	if head != t.head.text("reviewed_commit") {
-		_, err := update(id, func(t *task) error { return move(t, "ready", "working") })
+		_, err := update(id, func(cur *task) error { return move(cur, "ready", "working") })
 		if err != nil {
 			return err
 		}
@@ -43,7 +43,7 @@ func acceptCmd(raw []string) error {
 	if err := reviewedNow(t, head); err != nil {
 		return err
 	}
-	if err := clean(worktree); err != nil {
+	if err := clean(worktree, true); err != nil {
 		return fmt.Errorf("%w; %s stays ready", err, id)
 	}
 	other, err := mergingIn(t.space)
@@ -65,6 +65,12 @@ func acceptCmd(raw []string) error {
 		if err != nil {
 			return refuse("check %s failed; %s stays ready:\n%s", strings.Join(argv, " "), id, strings.TrimSpace(out+errOut))
 		}
+	}
+	if now, err := gitHead(worktree); err != nil || now != head {
+		if err != nil {
+			return err
+		}
+		return refuse("%s got a commit while its checks ran; accept it again", id)
 	}
 	if spaceHead.text("merge") == "pr" {
 		return openPR(t, spaceHead)
@@ -120,10 +126,10 @@ func mergeLocal(accepted task, spaceHead header) error {
 	if err != nil {
 		return err
 	}
-	if status := t.head.text("status"); status != "ready" || t.head.text("reviewed_commit") != reviewed {
-		return refuse("%s changed while it was being accepted (now %s); accept it again", t.id, status)
+	if err := stillAccepted(t, reviewed); err != nil {
+		return err
 	}
-	if err := clean(repo); err != nil {
+	if err := clean(repo, false); err != nil {
 		return fmt.Errorf("%w; commit or stash them, then accept %s again", err, t.id)
 	}
 	current, err := git("-C", repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -155,13 +161,32 @@ func mergeLocal(accepted task, spaceHead header) error {
 		return err
 	}
 	fmt.Printf("%s: merged into %s as %.7s\n", t.id, base, merged)
-	cleanUp(t, repo, "-d")
+	cleanUp(t, repo)
+	return nil
+}
+
+// stillAccepted refuses a task that was reopened or reviewed again while it
+// was being accepted.
+func stillAccepted(t task, reviewed string) error {
+	if status := t.head.text("status"); status != "ready" {
+		return refuse("%s changed while it was being accepted (now %s); accept it again", t.id, status)
+	}
+	if t.head.text("reviewed_commit") != reviewed {
+		return refuse("%s was reviewed again while it was being accepted; accept it again", t.id)
+	}
 	return nil
 }
 
 // cleanUp ends a merged task's terminals and removes its worktree and branch;
 // whatever will not go is kept and named.
-func cleanUp(t task, repo, deleteFlag string) {
+func cleanUp(t task, repo string) {
+	// A branch on just the reviewed commit is merged, even by a squash git
+	// cannot see; one with newer commits goes only if git agrees.
+	deleteFlag := "-d"
+	if head, err := git("-C", repo, "rev-parse", "refs/heads/"+t.head.text("branch")); err == nil &&
+		strings.TrimSpace(head) == t.head.text("reviewed_commit") {
+		deleteFlag = "-D"
+	}
 	killTerminals(t.id, "")
 	worktree := expand(t.head.text("worktree"))
 	if exists(worktree) {
@@ -181,7 +206,8 @@ func cleanUp(t task, repo, deleteFlag string) {
 func openPR(t task, spaceHead header) error {
 	worktree := expand(t.head.text("worktree"))
 	branch := t.head.text("branch")
-	if _, err := git("-C", worktree, "push", "origin", t.head.text("reviewed_commit")+":refs/heads/"+branch); err != nil {
+	reviewed := t.head.text("reviewed_commit")
+	if _, err := git("-C", worktree, "push", "origin", reviewed+":refs/heads/"+branch); err != nil {
 		return err
 	}
 	url := ""
@@ -204,11 +230,12 @@ func openPR(t task, spaceHead header) error {
 		}
 		url = lastLine(out)
 	}
-	_, err := update(t.id, func(t *task) error {
-		if err := move(t, "ready", "merging"); err != nil {
+	_, err := update(t.id, func(cur *task) error {
+		if err := stillAccepted(*cur, reviewed); err != nil {
 			return err
 		}
-		t.head.set("pr", url)
+		cur.head.set("status", "merging")
+		cur.head.set("pr", url)
 		return nil
 	})
 	if err != nil {
@@ -276,35 +303,28 @@ func followMerge(t task) error {
 
 // finishPR marks a task whose pull request merged as done and cleans up after it.
 func finishPR(t task, repo, merged string) error {
-	t, err := update(t.id, func(t *task) error {
-		if err := move(t, "merging", "done"); err != nil {
+	t, err := update(t.id, func(cur *task) error {
+		if err := move(cur, "merging", "done"); err != nil {
 			return err
 		}
-		t.head.set("merged", merged)
+		cur.head.set("merged", merged)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 	fmt.Printf("%s: merged as %.7s\n", t.id, merged)
-	// A squash merge leaves the branch unmerged in git's eyes; it goes only if
-	// it still holds just the reviewed commit, so nothing newer is lost.
-	deleteFlag := "-d"
-	if head, err := git("-C", repo, "rev-parse", "refs/heads/"+t.head.text("branch")); err == nil &&
-		strings.TrimSpace(head) == t.head.text("reviewed_commit") {
-		deleteFlag = "-D"
-	}
-	cleanUp(t, repo, deleteFlag)
+	cleanUp(t, repo)
 	return nil
 }
 
 // backToReady returns a merging task to ready, saying why in its step.
 func backToReady(id, why string) error {
-	_, err := update(id, func(t *task) error {
-		if err := move(t, "merging", "ready"); err != nil {
+	_, err := update(id, func(cur *task) error {
+		if err := move(cur, "merging", "ready"); err != nil {
 			return err
 		}
-		t.head.set("step", why)
+		cur.head.set("step", why)
 		return nil
 	})
 	if err != nil {
@@ -323,14 +343,14 @@ func doneCmd(raw []string) error {
 		return usage("done takes one task id")
 	}
 	id := a.words[0]
-	_, err = update(id, func(t *task) error {
-		switch status := t.head.text("status"); status {
+	_, err = update(id, func(cur *task) error {
+		switch status := cur.head.text("status"); status {
 		case "done":
 			return refuse("%s is done already", id)
 		case "merging":
 			return refuse("%s is merging; merge or close its pull request first", id)
 		}
-		t.head.set("status", "done")
+		cur.head.set("status", "done")
 		return nil
 	})
 	if err != nil {
@@ -365,14 +385,14 @@ func reopenCmd(raw []string) error {
 
 // reopenReady sends a ready task back to its worker; its round no longer counts.
 func reopenReady(t task) error {
-	if err := clean(expand(t.head.text("worktree"))); err != nil {
+	if err := clean(expand(t.head.text("worktree")), true); err != nil {
 		return fmt.Errorf("%w; commit or drop them first", err)
 	}
-	t, err := update(t.id, func(t *task) error {
-		if err := move(t, "ready", "working"); err != nil {
+	t, err := update(t.id, func(cur *task) error {
+		if err := move(cur, "ready", "working"); err != nil {
 			return err
 		}
-		t.head.set("reviewed_commit", nil)
+		cur.head.set("reviewed_commit", nil)
 		return nil
 	})
 	if err != nil {
@@ -383,7 +403,8 @@ func reopenReady(t task) error {
 }
 
 // reopenDone starts a done task again: on its worktree if it is still there,
-// on its branch if that is, else on a fresh <branch>-2 from the base.
+// on its branch if that is, else on a fresh <branch>-2 (or the next free
+// number) from the base.
 func reopenDone(t task) error {
 	_, spaceHead, _, err := loadSpace(t.space)
 	if err != nil {
@@ -398,17 +419,16 @@ func reopenDone(t task) error {
 				return err
 			}
 		} else {
-			branch += "-2"
-			worktree += "-2"
+			branch, worktree = freshPlace(repo, t)
 		}
 	}
-	_, err = update(t.id, func(t *task) error {
-		if err := move(t, "done", "todo"); err != nil {
+	_, err = update(t.id, func(cur *task) error {
+		if err := move(cur, "done", "todo"); err != nil {
 			return err
 		}
-		t.head.set("branch", branch)
-		t.head.set("worktree", worktree)
-		t.head.set("reviewed_commit", nil)
+		cur.head.set("branch", branch)
+		cur.head.set("worktree", worktree)
+		cur.head.set("reviewed_commit", nil)
 		return nil
 	})
 	if err != nil {
@@ -417,9 +437,21 @@ func reopenDone(t task) error {
 	started, err := start(t.id, false)
 	if err != nil {
 		// A launch that fails leaves the task done, as it was.
-		_, _ = update(t.id, func(t *task) error { return move(t, "todo", "done") })
+		_, _ = update(t.id, func(cur *task) error { return move(cur, "todo", "done") })
 		return err
 	}
 	fmt.Println(taskLine(started.head))
 	return nil
+}
+
+// freshPlace is a new branch and worktree for a task whose own are gone:
+// its first ones with -2, or the next number that is free.
+func freshPlace(repo string, t task) (string, string) {
+	stem, place := taskPlace(t.space, t.id, t.head.text("title"))
+	for n := 2; ; n++ {
+		branch, worktree := fmt.Sprintf("%s-%d", stem, n), fmt.Sprintf("%s-%d", place, n)
+		if !branchExists(repo, branch) && !exists(expand(worktree)) {
+			return branch, worktree
+		}
+	}
 }
