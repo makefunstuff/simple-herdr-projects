@@ -5,6 +5,7 @@ export const state = {
   props: {},      // props() for the copy under test
   spaces: [],     // spaces() the rows see
   machines: '{"machines":[]}', // `hc machine ls --json`
+  hc: null,       // set to answer hc() some other way
   exec: async () => ({ code: 0, stdout: "[]", stderr: "" }), // exec() answers
 };
 
@@ -22,7 +23,7 @@ export async function exec(command, args, options) {
 
 export async function hc(args) {
   calls.hc.push(args);
-  return { code: 0, stdout: state.machines, stderr: "" };
+  return state.hc ? state.hc(args) : { code: 0, stdout: state.machines, stderr: "" };
 }
 
 export function run(name, args) {

@@ -69,7 +69,7 @@ A live old worker is adopted by `herdr.task` and found by `imported_key`; a pers
 
 ## 9. Not in v1
 
-Web app, voice, add-ons, settings, proof store, sync, remote `--on`, non-repo spaces, installer, archive, automations, push.
+Web app, voice, add-ons, settings, proof store, sync, remote `--on` in `shp` (the board reaches machines through Herdr), non-repo spaces, installer, archive, automations, push.
 
 ## 10. Build
 

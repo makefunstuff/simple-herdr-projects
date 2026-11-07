@@ -1,7 +1,7 @@
-// The panel's handlers, driven with fake Herdr modules (tests/fake): the data rules run in
+// The panel's handlers, driven with fake Herdr modules (tests/fake-herdr): the data rules run in
 // board_test.go's node snippets, and this holds what those cannot: that Accept asks first, runs
 // one accept at a time, says why it was refused, closes on success, and that its click does not
-// open the row's space. Run: node --import tests/fake/hooks.mjs tests/board-main.mjs [mod folder]
+// open the row's space. Run: node --import tests/fake-herdr/hooks.mjs tests/board-main.mjs [mod folder]
 
 import { state, calls, theme } from "herdr";
 import { join } from "node:path";
@@ -29,16 +29,15 @@ const reset = () => {
 
 const fakeCx = () => {
   const cx = {
-  pending: [],
-  notified: 0,
-  notify() { this.notified++; },
-  spawn(fn) { this.pending.push(Promise.resolve().then(() => fn(this))); },
-  timers: [],
-  timer: { every(ms, fn) { this.owner.timers.push({ ms, fn }); } },
-  focus_handle: () => ({ focus() {} }),
-  stop_propagation() {},
+    pending: [],
+    notified: 0,
+    notify() { cx.notified++; },
+    spawn(fn) { cx.pending.push(Promise.resolve().then(() => fn(cx))); },
+    timers: [],
+    timer: { every: (ms, fn) => cx.timers.push({ ms, fn }) },
+    focus_handle: () => ({ focus() {} }),
+    stop_propagation() {},
   };
-  cx.timer.owner = cx;
   return cx;
 };
 // Wait for every spawned task, and the tasks those spawn.
@@ -133,6 +132,29 @@ first.board.refresh(first.cx);
 await settle(first.cx);
 eq(calls.notices.length, 0, "recovery does not toast the same tasks again");
 
+// A machine whose shp names a bad task file still lists the rest, still gets the tick, and
+// toasts nothing from the partial listing.
+state.exec = async (command, args, options) => options?.on === "mac"
+  ? { code: 1, stdout: JSON.stringify([{ id: "M-2", title: "New on the mac", status: "ready" }]), stderr: "shp: M-1.md: bad header\n" }
+  : listings(command, args, options);
+first.board.refresh(first.cx);
+await settle(first.cx);
+eq(first.board.places[1].tasks.map((task) => task.id), ["M-2"], "the readable tasks still show");
+eq(first.board.places[1].error, "shp: M-1.md: bad header", "beside the reason");
+eq(calls.notices.length, 0, "a partial listing toasts nothing");
+calls.exec.length = 0;
+first.cx.timers[1].fn(first.cx);
+await tick();
+eq(calls.exec.map((c) => c.on), [null, "mac"], "and the machine still gets its tick");
+
+// Without an answer from herdr-core, the machines already known stay on the board.
+state.exec = listings;
+state.hc = async () => ({ code: 1, stdout: "", stderr: "core is restarting" });
+first.board.refresh(first.cx);
+await settle(first.cx);
+eq(first.board.places.map((p) => p.name), [null, "mac", "nas"], "a failed hc machine ls keeps the machines");
+state.hc = null;
+
 // A machine that never answers holds up only its own rows: this computer's tasks show and toast.
 reset();
 state.machines = JSON.stringify({ machines: [{ name: "mac", state: "connected" }] });
@@ -199,7 +221,7 @@ eq(unreachable.error, "mac is unreachable", "and shows the reason");
 reset();
 state.spaces = [{ id: "s1", name: "A-1 · Fix login", machine: null }];
 const { board: rows } = await startBoard();
-const row = rows.row(ready, theme());
+const row = rows.row(ready, state.spaces, theme());
 const open = row.calls.on_click?.[0]?.[0];
 ok(Boolean(open), "a started task's row opens its space");
 open({}, fakeCx());
@@ -214,7 +236,7 @@ eq(calls.overlays.at(-1).props.accept, ready, "the dialog is about that task");
 
 // Nothing to open: the row is not clickable.
 state.spaces = [];
-const bare = rows.row({ id: "Z-9", title: "Not started", status: "ready" }, theme());
+const bare = rows.row({ id: "Z-9", title: "Not started", status: "ready" }, state.spaces, theme());
 ok(!bare.calls.on_click, "a row with no space has no click");
 
 // The keyboard works as in px-confirm: Esc cancels, Enter accepts.

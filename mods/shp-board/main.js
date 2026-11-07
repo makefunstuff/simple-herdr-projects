@@ -31,7 +31,8 @@ function bar(t, label, n, color) {
 }
 
 // A place is one machine's share of the board; name null is this computer.
-const newPlace = (name, connected) => ({ name, connected, tasks: [], error: null, read: false, loading: false });
+// answered: its shp listed tasks, even beside a bad task file; only then does it get the tick.
+const newPlace = (name, connected) => ({ name, connected, tasks: [], error: null, read: false, answered: false, loading: false });
 
 export default class Board extends View {
   init(_props, cx) {
@@ -48,23 +49,28 @@ export default class Board extends View {
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(TICK, () => {
       for (const place of this.places) {
-        if (place.read && !place.error) exec("shp", ["tick"], { on: place.name }).catch(() => null);
+        if (place.answered) exec("shp", ["tick"], { on: place.name }).catch(() => null);
       }
     });
   }
 
   // Find the linked machines, then read each one that isn't still answering the last read.
+  // Without an answer from herdr-core, the machines stay as they were.
   refresh(cx) {
+    if (this.listing) return;
+    this.listing = true;
     cx.spawn(async (cx) => {
-      let linked = [];
       try {
         const reply = await hc(["machine", "ls", "--json"]);
-        if (reply.code === 0) linked = linkedMachines(reply.stdout);
+        if (reply.code === 0) {
+          this.places = [{ name: null, connected: true }, ...linkedMachines(reply.stdout)].map(({ name, connected }) =>
+            Object.assign(this.places.find((place) => place.name === name) ?? newPlace(name, connected), { connected }));
+        }
       } catch {
-        // no herdr-core answer: this computer's tasks are still worth showing
+        // no herdr-core answer: read the machines already known
+      } finally {
+        this.listing = false;
       }
-      this.places = [{ name: null, connected: true }, ...linked].map(({ name, connected }) =>
-        Object.assign(this.places.find((place) => place.name === name) ?? newPlace(name, connected), { connected }));
       for (const place of this.places) this.load(place, cx);
       cx.notify();
     });
@@ -73,7 +79,7 @@ export default class Board extends View {
   load(place, cx) {
     if (place.loading) return;
     if (!place.connected) {
-      Object.assign(place, { tasks: [], error: "Not connected.", read: true });
+      Object.assign(place, { tasks: [], error: "Not connected.", read: true, answered: false });
       return;
     }
     place.loading = true;
@@ -81,12 +87,15 @@ export default class Board extends View {
       try {
         const reply = await exec("shp", ["list", "--json"], { on: place.name });
         // shp still prints the tasks it could read when another task file is bad.
-        place.tasks = reply.stdout.trim() ? tasksOf(place.name, reply.stdout) : [];
+        place.answered = reply.code === 0 || Boolean(reply.stdout.trim());
+        place.tasks = place.answered ? tasksOf(place.name, reply.stdout) : [];
         place.error = reply.code === 0 ? null : lastLine(reply.stderr) || `shp list exited ${reply.code}`;
-        if (reply.stdout.trim()) this.toast(place);
+        // A partial listing would forget the toasts of the tasks it is missing.
+        if (reply.code === 0) this.toast(place);
       } catch (error) {
         place.tasks = [];
         place.error = errorLine(error);
+        place.answered = false;
       } finally {
         place.loading = false;
         place.read = true;
@@ -131,24 +140,25 @@ export default class Board extends View {
     });
   }
 
-  // One machine: its name when there are several (or it has a reason), then a bar per status.
-  place(body, entry, t) {
-    if (this.places.length > 1 || entry.error) {
+  // Add one machine's rows to body: its name when there are several (or it has a reason),
+  // then a bar per status.
+  addMachine(body, place, all, t) {
+    if (this.places.length > 1 || place.error) {
       body.child(h_flex().h(26).flex_none().mt(6).px(8).gap(8).items_center()
-        .child(div().text_size(10.5).font_semibold().text_color(t.muted).child(caps(entry.name ?? "This computer")))
+        .child(div().text_size(10.5).font_semibold().text_color(t.muted).child(caps(place.name ?? "This computer")))
         .child(div().flex_1())
-        .when(!entry.error, (e) => e.child(div().text_size(10.5).text_color(t.dim).child(String(entry.tasks.length)))));
+        .when(!place.error, (e) => e.child(div().text_size(10.5).text_color(t.dim).child(String(place.tasks.length)))));
     }
-    if (entry.error) body.child(div().px(9).py(6).truncate().text_size(11).text_color(t.dim).child(entry.error));
-    for (const section of group(entry.tasks)) {
+    if (place.error) body.child(div().px(9).py(6).truncate().text_size(11).text_color(t.dim).child(place.error));
+    for (const section of group(place.tasks)) {
       const color = t[section.color] ?? t.dim;
       body.child(bar(t, section.label, section.tasks.length, color));
-      for (const task of section.tasks) body.child(this.row(task, t));
+      for (const task of section.tasks) body.child(this.row(task, all, t));
     }
   }
 
-  row(task, t) {
-    const space = workspace(task, spaces());
+  row(task, all, t) {
+    const space = workspace(task, all);
     const info = detail(task);
     const under = subtitle(task);
     const open = () => run("space.select", { id: space.id });
@@ -196,7 +206,8 @@ export default class Board extends View {
     const needs = tasks.filter((task) => task.status === "needs").length;
     const ready = tasks.filter((task) => task.status === "ready").length;
     const body = v_flex().id("shp-board-list").flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(10);
-    for (const place of this.places) this.place(body, place, t);
+    const all = spaces();
+    for (const place of this.places) this.addMachine(body, place, all, t);
     if (!tasks.length && this.places.every((place) => !place.error)) {
       const read = this.places.every((place) => place.read);
       body.child(div().px(2).py(10).text_size(11).text_color(t.dim).child(read ? "No tasks yet." : "Reading tasks…"));

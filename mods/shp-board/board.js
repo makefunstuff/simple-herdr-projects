@@ -1,7 +1,7 @@
 // The board's rules, apart from Herdr so node can test them: how tasks group, what a row
 // says, when a task earns a toast, and which machines to read.
 
-export const SECTIONS = [
+const SECTIONS = [
   { key: "needs", label: "Needs you", color: "blocked", statuses: ["needs"] },
   { key: "working", label: "Working", color: "working", statuses: ["working", "merging"] },
   { key: "ready", label: "Ready", color: "done", statuses: ["ready"] },
@@ -90,9 +90,10 @@ export function tasksOf(machine, text) {
 }
 
 // workspace is the task's Herdr space, if it has one: named "<ID> · <title>" on its machine.
+// A recorded workspace id wins; a remote space's id carries its machine as "machine/id".
 export function workspace(task, spaces) {
-  const machine = task.machine ?? null;
+  const here = spaces.filter((space) => (space.machine ?? null) === (task.machine ?? null));
   const id = task.workspace;
-  return spaces.find((space) => (space.machine ?? null) === machine
-    && (space.name === `${task.id} · ${task.title}` || Boolean(id) && (space.id === id || space.id.endsWith(`/${id}`)))) ?? null;
+  const byId = id ? here.find((space) => space.id === id || space.id.endsWith(`/${id}`)) : null;
+  return byId ?? here.find((space) => space.name === `${task.id} · ${task.title}`) ?? null;
 }

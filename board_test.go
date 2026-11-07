@@ -150,7 +150,7 @@ func TestBoardPanel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(node, "--import", "./tests/fake/hooks.mjs", "tests/board-main.mjs", mod).CombinedOutput()
+	out, err := exec.Command(node, "--import", "./tests/fake-herdr/hooks.mjs", "tests/board-main.mjs", mod).CombinedOutput()
 	if err != nil {
 		t.Fatalf("board panel: %v\n%s", err, out)
 	}
