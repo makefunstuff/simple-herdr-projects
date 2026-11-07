@@ -148,7 +148,8 @@ func taskLine(h header) string {
 		quoted := make([]string, len(asks))
 		for i, item := range asks {
 			ask, _ := item.(map[string]any)
-			quoted[i] = fmt.Sprintf("%q", ask["text"])
+			text, _ := ask["text"].(string)
+			quoted[i] = `"` + text + `"`
 		}
 		tail = append(tail, "asks: "+strings.Join(quoted, " / "))
 	}
@@ -322,11 +323,11 @@ func listCmd(raw []string) error {
 		}
 	}
 	if a.bools["json"] {
-		objects := make([]map[string]any, len(shown))
+		heads := make([]header, len(shown))
 		for i, t := range shown {
-			objects[i] = t.head.object()
+			heads[i] = t.head
 		}
-		if err := printJSON(objects); err != nil {
+		if err := printJSON(heads); err != nil {
 			return err
 		}
 	} else {
@@ -353,7 +354,7 @@ func showCmd(raw []string) error {
 		return err
 	}
 	if a.bools["json"] {
-		return printJSON(t.head.object())
+		return printJSON(t.head)
 	}
 	text, err := readText(t.path)
 	if err != nil {

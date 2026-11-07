@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,8 +162,8 @@ func start(id string, queued bool) (task, error) {
 			return task{}, refuse("%s has no %s", tilde(t.path), key)
 		}
 	}
-	if status := t.head.text("status"); status != "todo" && status != "queued" {
-		return task{}, refuse("%s is %s; only todo or queued starts (edit %s)", id, status, tilde(t.path))
+	if err := startable(t); err != nil {
+		return task{}, err
 	}
 	live, err := workerTerminal(id)
 	if err != nil {
@@ -175,118 +176,17 @@ func start(id string, queued bool) (task, error) {
 	if err != nil {
 		return task{}, err
 	}
-
-	unlock, err := lock()
+	t, previous, err := claim(id, queued)
 	if err != nil {
 		return task{}, err
 	}
-	t, err = loadTask(id)
+	workspace, err := launch(spaceHead, t)
 	if err != nil {
-		unlock()
-		return task{}, err
-	}
-	status := t.head.text("status")
-	if status != "todo" && status != "queued" {
-		unlock()
-		return task{}, refuse("%s is %s; only todo or queued starts (edit %s)", id, status, tilde(t.path))
-	}
-	if queued {
-		cfg, err := config()
-		if err != nil {
-			unlock()
-			return task{}, err
-		}
-		maxRunning, _ := cfg.number("max_running")
-		running := 0
-		tasks, _ := allTasks()
-		for _, held := range tasks {
-			if holdingStatuses[held.head.text("status")] {
-				running++
-			}
-		}
-		if running >= maxRunning {
-			unlock()
-			return task{}, noSlot(fmt.Sprintf("%s waits: max_running is %d", id, maxRunning))
-		}
-	}
-	previous := status
-	t.head.set("status", "working")
-	err = writeText(t.path, render(t.head, t.body))
-	unlock()
-	if err != nil {
+		release(id, previous, workspace)
 		return task{}, err
 	}
 
-	workspace := ""
-	launched := false
-	defer func() {
-		if launched {
-			return
-		}
-		if workspace != "" {
-			_, _ = herdrApp("space.close", map[string]any{"id": workspace, "confirmed": true})
-		}
-		unlock, err := lock()
-		if err != nil {
-			return
-		}
-		defer unlock()
-		current, err := loadTask(id)
-		if err != nil {
-			return
-		}
-		if current.head.text("status") == "working" && len(current.head.list("asks")) == 0 {
-			current.head.set("status", previous)
-			_ = writeText(current.path, render(current.head, current.body))
-		}
-	}()
-
-	if err := makeWorktree(spaceHead, t); err != nil {
-		return task{}, err
-	}
-	argv := t.head.words("agent")
-	if len(argv) == 0 {
-		cfg, err := config()
-		if err != nil {
-			return task{}, err
-		}
-		argv = cfg.words("worker")
-	}
-	if len(argv) == 0 {
-		return task{}, refuse("%s has no worker command; set agent or config worker", id)
-	}
-	prompt := workerPrompt(t.space, t)
-	reply, err := herdrApp("space.new", map[string]any{
-		"name":   id + " · " + t.head.text("title"),
-		"folder": expand(t.head.text("worktree")),
-		"tab":    "Chat",
-		"argv":   argv,
-		"task":   prompt,
-	})
-	if err != nil {
-		return task{}, err
-	}
-	terminal, _ := reply["terminal"].(string)
-	workspace, _ = reply["space"].(string)
-	if terminal == "" {
-		return task{}, refuse("herdr-app made no terminal for %s", id)
-	}
-	if _, err := hc("label", terminal, "herdr.task="+id, "herdr.role=worker"); err != nil {
-		return task{}, err
-	}
-	if err := deliver(terminal, prompt, id); err != nil {
-		return task{}, err
-	}
-	reply, err = hcJSON("get", terminal)
-	if err != nil {
-		return task{}, err
-	}
-	if reply["state"] != "live" {
-		return task{}, refuse("%s: the worker exited right after launch", id)
-	}
-	launched = true
-
-	unlock, err = lock()
+	unlock, err := lock()
 	if err != nil {
 		return task{}, err
 	}
@@ -300,6 +200,125 @@ func start(id string, queued bool) (task, error) {
 		return task{}, err
 	}
 	return t, nil
+}
+
+// startable refuses a task that is not todo or queued.
+func startable(t task) error {
+	if status := t.head.text("status"); status != "todo" && status != "queued" {
+		return refuse("%s is %s; only todo or queued starts (edit %s)", t.id, status, tilde(t.path))
+	}
+	return nil
+}
+
+// claim marks a task working under the lock, so no other start takes it, and
+// returns the status it had. A queued task also needs a free slot.
+func claim(id string, queued bool) (task, string, error) {
+	unlock, err := lock()
+	if err != nil {
+		return task{}, "", err
+	}
+	defer unlock()
+	t, err := loadTask(id)
+	if err != nil {
+		return task{}, "", err
+	}
+	if err := startable(t); err != nil {
+		return task{}, "", err
+	}
+	if queued {
+		cfg, err := config()
+		if err != nil {
+			return task{}, "", err
+		}
+		maxRunning, _ := cfg.number("max_running")
+		running := 0
+		tasks, _ := allTasks()
+		for _, held := range tasks {
+			if holdingStatuses[held.head.text("status")] {
+				running++
+			}
+		}
+		if running >= maxRunning {
+			return task{}, "", noSlot(fmt.Sprintf("%s waits: max_running is %d", id, maxRunning))
+		}
+	}
+	previous := t.head.text("status")
+	t.head.set("status", "working")
+	if err := writeText(t.path, render(t.head, t.body)); err != nil {
+		return task{}, "", err
+	}
+	return t, previous, nil
+}
+
+// launch makes the worktree and opens the worker in its own Herdr space,
+// returning that space's id; on an error the id is whatever was made so far.
+func launch(spaceHead header, t task) (string, error) {
+	if err := makeWorktree(spaceHead, t); err != nil {
+		return "", err
+	}
+	argv := t.head.words("agent")
+	if len(argv) == 0 {
+		cfg, err := config()
+		if err != nil {
+			return "", err
+		}
+		argv = cfg.words("worker")
+	}
+	if len(argv) == 0 {
+		return "", refuse("%s has no worker command; set agent or config worker", t.id)
+	}
+	prompt := workerPrompt(t.space, t)
+	reply, err := herdrApp("space.new", map[string]any{
+		"name":   t.id + " · " + t.head.text("title"),
+		"folder": expand(t.head.text("worktree")),
+		"tab":    "Chat",
+		"argv":   argv,
+		"task":   prompt,
+	})
+	if err != nil {
+		return "", err
+	}
+	terminal, _ := reply["terminal"].(string)
+	workspace, _ := reply["space"].(string)
+	if terminal == "" {
+		return workspace, refuse("herdr-app made no terminal for %s", t.id)
+	}
+	if _, err := hc("label", terminal, "herdr.task="+t.id, "herdr.role=worker"); err != nil {
+		return workspace, err
+	}
+	if err := deliver(terminal, prompt, t.id); err != nil {
+		return workspace, err
+	}
+	reply, err = hcJSON("get", terminal)
+	if err != nil {
+		return workspace, err
+	}
+	if reply["state"] != "live" {
+		return workspace, refuse("%s: the worker exited right after launch", t.id)
+	}
+	return workspace, nil
+}
+
+// release undoes a failed launch: it closes the space and puts the task back,
+// unless the worker got far enough to ask something. It is best effort, as the
+// launch's own error is the one to report.
+func release(id, previous, workspace string) {
+	if workspace != "" {
+		_, _ = herdrApp("space.close", map[string]any{"id": workspace, "confirmed": true})
+	}
+	unlock, err := lock()
+	if err != nil {
+		return
+	}
+	defer unlock()
+	t, err := loadTask(id)
+	if err != nil {
+		return
+	}
+	if t.head.text("status") == "working" && len(t.head.list("asks")) == 0 {
+		t.head.set("status", previous)
+		_ = writeText(t.path, render(t.head, t.body))
+	}
 }
 
 func startCmd(raw []string) error {
@@ -353,7 +372,7 @@ func tickCmd(raw []string) error {
 			continue
 		}
 		if _, err := start(t.id, true); err != nil {
-			if _, full := err.(noSlot); full {
+			if errors.As(err, new(noSlot)) {
 				break
 			}
 			if current, readErr := loadTask(t.id); readErr == nil &&

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -171,13 +173,28 @@ func (h header) words(key string) []string {
 	return words
 }
 
-// object is a header as a JSON object.
-func (h header) object() map[string]any {
-	object := make(map[string]any, len(h.fields))
-	for _, f := range h.fields {
-		object[f.key] = f.value
+// MarshalJSON writes a header as a JSON object with its keys in file order.
+func (h header) MarshalJSON() ([]byte, error) {
+	var out bytes.Buffer
+	out.WriteByte('{')
+	for i, f := range h.fields {
+		if i > 0 {
+			out.WriteByte(',')
+		}
+		key, err := json.Marshal(f.key)
+		if err != nil {
+			return nil, err
+		}
+		value, err := json.Marshal(f.value)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", f.key, err)
+		}
+		out.Write(key)
+		out.WriteByte(':')
+		out.Write(value)
 	}
-	return object
+	out.WriteByte('}')
+	return out.Bytes(), nil
 }
 
 // parseFile reads a file's header and the Markdown below it.
@@ -246,11 +263,42 @@ func quote(value any) string {
 		!json.Valid([]byte(text)) {
 		return text
 	}
-	var out bytes.Buffer
-	encoder := json.NewEncoder(&out)
-	encoder.SetEscapeHTML(false)
-	_ = encoder.Encode(value) // header values are strings, numbers, lists and maps
-	return strings.TrimSuffix(out.String(), "\n")
+	var out strings.Builder
+	writeJSON(&out, value)
+	return out.String()
+}
+
+// writeJSON writes a value with a space after each comma and colon, the way
+// the store's files have always been written.
+func writeJSON(out *strings.Builder, value any) {
+	switch v := value.(type) {
+	case []any:
+		out.WriteString("[")
+		for i, item := range v {
+			if i > 0 {
+				out.WriteString(", ")
+			}
+			writeJSON(out, item)
+		}
+		out.WriteString("]")
+	case map[string]any:
+		out.WriteString("{")
+		for i, key := range slices.Sorted(maps.Keys(v)) {
+			if i > 0 {
+				out.WriteString(", ")
+			}
+			writeJSON(out, key)
+			out.WriteString(": ")
+			writeJSON(out, v[key])
+		}
+		out.WriteString("}")
+	default:
+		var data bytes.Buffer
+		encoder := json.NewEncoder(&data)
+		encoder.SetEscapeHTML(false)
+		_ = encoder.Encode(v) // the rest are strings, numbers, booleans and null
+		out.WriteString(strings.TrimSuffix(data.String(), "\n"))
+	}
 }
 
 // defaults are config.md's defaults, in the order the file lists them.

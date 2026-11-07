@@ -400,7 +400,7 @@ func TestSpace(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(data)
-		for _, want := range []string{"prefix: WORK", "base: main", `"make"`, f.repo, "next: 1"} {
+		for _, want := range []string{"prefix: WORK", "base: main", `checks: [["make", "check"]]`, f.repo, "next: 1"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("space file lacks %q:\n%s", want, text)
 			}
@@ -595,6 +595,23 @@ func TestAdd(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
+	t.Run("show --json keeps the file's key order", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		id := f.addTask("Order")
+		got := f.ok("show", id, "--json")
+		var keys []string
+		for _, line := range strings.Split(got, "\n") {
+			if key, _, ok := strings.Cut(strings.TrimSpace(line), `": `); ok && strings.HasPrefix(line, `  "`) {
+				keys = append(keys, strings.TrimPrefix(key, `"`))
+			}
+		}
+		want := "id title status agent branch worktree asks"
+		if strings.Join(keys, " ") != want {
+			t.Errorf("keys %v, want %s:\n%s", keys, want, got)
+		}
+	})
+
 	t.Run("todo, queued, working and needs show", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
