@@ -52,9 +52,14 @@ export function notice(task) {
 }
 
 // fresh returns the notices not seen before, and the keys of the tasks that have one now:
-// a task keeps its key while it stays needs or ready, so it toasts once.
-export function fresh(seen, tasks) {
+// a task keeps its key while it stays needs or ready, so it toasts once. A machine whose
+// listing failed (`stale`) keeps its keys: the same task must not toast again when it returns.
+export function fresh(seen, tasks, stale = []) {
   const now = {};
+  for (const machine of stale) {
+    const prefix = `${machine ?? ""}/`;
+    for (const key of Object.keys(seen)) if (key.startsWith(prefix)) now[key] = true;
+  }
   const notices = [];
   for (const task of tasks) {
     const one = notice(task);

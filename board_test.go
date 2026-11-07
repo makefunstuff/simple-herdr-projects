@@ -95,6 +95,18 @@ const both = board.fresh({}, [
   { id: "A-1", status: "ready", title: "Two" },
 ]);
 eq(both.notices.length, 2, "the same id on two machines toasts twice");
+
+const remote = [{ id: "R-1", status: "needs", machine: "mac", title: "Remote", asks: [{ text: "Which?" }] }];
+const seenRemote = board.fresh({}, remote).seen;
+const failed = board.fresh(seenRemote, [], ["mac"]);
+eq(failed.notices.length, 0, "a failed read toasts nothing");
+eq(failed.seen, seenRemote, "a failed machine keeps its seen keys");
+const recovered = board.fresh(failed.seen, remote, []);
+eq(recovered.notices.length, 0, "recovery does not toast an unchanged task again");
+const gone = board.fresh(recovered.seen, [], []);
+eq(gone.seen, {}, "a machine that answers drops the tasks that are gone");
+eq(board.fresh({ "/A-1:needs": true, "mac/B-2:ready": true }, [], [null]).seen,
+  { "/A-1:needs": true }, "a failed local read keeps only local keys");
 `)
 }
 

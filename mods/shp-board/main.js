@@ -53,7 +53,8 @@ export default class Board extends View {
       try {
         this.places = await Promise.all([null, ...linked].map((name) => this.load(name)));
         const all = this.places.flatMap((place) => place.tasks);
-        const news = fresh(this.seen ?? {}, all);
+        const stale = this.places.filter((place) => place.error).map((place) => place.name);
+        const news = fresh(this.seen ?? {}, all, stale);
         if (this.seen) for (const one of news.notices) notify({ title: one.title, body: one.body, level: one.level });
         this.seen = news.seen;
       } finally {
@@ -82,6 +83,7 @@ export default class Board extends View {
   }
 
   accept(task, cx) {
+    if (this.busy) return; // one accept per dialog, however fast the clicks
     this.busy = true;
     this.error = null;
     cx.notify();
@@ -135,20 +137,21 @@ export default class Board extends View {
       .when(Boolean(info), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(info)))
       .when(task.status === "ready", (e) => e.child(chip(t, `accept-${task.machine ?? "here"}-${task.id}`, "Accept", t.accent)
         .cursor_pointer().hover((s) => s.bg(t.accent).text_color(t.accent_foreground)).on_mouse_down("left", (ev, cx) => cx.stop_propagation())
-        .on_click(() => this.ask(task))));
+        .on_click((ev, cx) => { cx.stop_propagation(); this.ask(task); })));
   }
 
   // The confirm dialog before accepting: the one change that merges and finishes work.
   confirm(task, t) {
     const button = (id, label, bg, fg, onClick) => h_flex().id(id).h(28).px(12).items_center().border_1().border_color(bg).bg(bg)
-      .text_color(fg).cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick).child(caps(label));
+      .text_color(fg).when(Boolean(onClick), (e) => e.cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick)).child(caps(label));
     return v_flex().id("shp-board-confirm").size_full().p(16).gap(12).bg(t.popover).text_color(t.foreground).text_size(13)
       .child(div().text_size(15).font_semibold().child(`Accept ${task.id}?`))
       .child(div().flex_1().min_h(0).text_color(t.muted).child(`${task.title} — runs its space's checks, then merges its branch or pull request.`))
       .when(Boolean(this.error), (e) => e.child(div().text_size(11).text_color(t.blocked).child(this.error)))
       .child(h_flex().justify_end().gap(8).text_size(12)
         .child(button("no", "Cancel", t.raised, t.foreground, () => closeOverlay(props().overlay)))
-        .child(button("yes", this.busy ? "Accepting…" : "Accept", t.accent, t.accent_foreground, (ev, cx) => this.accept(task, cx))));
+        .child(button("yes", this.busy ? "Accepting…" : "Accept", t.accent, t.accent_foreground,
+          this.busy ? null : (ev, cx) => this.accept(task, cx))));
   }
 
   render() {
