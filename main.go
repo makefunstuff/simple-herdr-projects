@@ -31,6 +31,7 @@ var commands = map[string]func([]string) error{
 	"accept":   acceptCmd,
 	"reopen":   reopenCmd,
 	"done":     doneCmd,
+	"import":   importCmd,
 }
 
 func dispatch(argv []string) int {

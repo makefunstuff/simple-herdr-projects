@@ -285,16 +285,18 @@ func helpText(argv []string) string {
 		return reopenHelp
 	case "done":
 		return doneHelp
+	case "import":
+		return importHelp
 	}
 	return mainHelp
 }
 
-const mainHelp = `usage: shp [-h] {config,space,add,list,show,start,tick,status,ask,say,review,reviewed,ready,accept,reopen,done} ...
+const mainHelp = `usage: shp [-h] {config,space,add,list,show,start,tick,status,ask,say,review,reviewed,ready,accept,reopen,done,import} ...
 
 Spaces and tasks for coding agents on Herdr.
 
 positional arguments:
-  {config,space,add,list,show,start,tick,status,ask,say,review,reviewed,ready,accept,reopen,done}
+  {config,space,add,list,show,start,tick,status,ask,say,review,reviewed,ready,accept,reopen,done,import}
     config              print the config file
     space               spaces are git repos
     add                 add a task
@@ -311,6 +313,7 @@ positional arguments:
     accept              check and merge a ready task
     reopen              send a ready or done task back to work
     done                drop a task, keeping its branch and worktree
+    import              copy Shepherdr 3.1's spaces, tasks and roles
 
 options:
   -h, --help            show this help message and exit
@@ -490,4 +493,15 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+`
+
+const importHelp = `usage: shp import [-h] [--dry-run]
+
+Reads Shepherdr 3.1's ~/.herdr/tasks and ~/.herdr/shepherdr.json, never
+writing to them, and copies every project, task and role into shp. Live old
+workers are labelled so shp finds them.
+
+options:
+  -h, --help  show this help message and exit
+  --dry-run   print the report; write nothing
 `
