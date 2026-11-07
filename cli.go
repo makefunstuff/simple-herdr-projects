@@ -131,7 +131,11 @@ func git(args ...string) (string, error) {
 		if reason == "" {
 			reason = "failed"
 		}
-		return "", refuse("git %s: %s", args[0], reason)
+		verb := args[0]
+		if verb == "-C" && len(args) > 2 {
+			verb = args[2]
+		}
+		return "", refuse("git %s: %s", verb, reason)
 	}
 	return out, nil
 }

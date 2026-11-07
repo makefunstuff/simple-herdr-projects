@@ -34,18 +34,23 @@ func acceptCmd(raw []string) error {
 		return err
 	}
 	if head != t.head.text("reviewed_commit") {
-		if _, err := update(id, setFrom("ready", "working")); err != nil {
+		_, err := update(id, func(t *task) error { return move(t, "ready", "working") })
+		if err != nil {
 			return err
 		}
 		return refuse("%s has commits after its last review round; it is working again: review, then ready", id)
 	}
-	if err := reviewedNow(t); err != nil {
+	if err := reviewedNow(t, head); err != nil {
 		return err
 	}
 	if err := clean(worktree); err != nil {
 		return fmt.Errorf("%w; %s stays ready", err, id)
 	}
-	if other := mergingIn(t.space); other != "" {
+	other, err := mergingIn(t.space)
+	if err != nil {
+		return err
+	}
+	if other != "" {
 		return refuse("%s is merging in %s; one accept per space at a time", other, t.space)
 	}
 	if !a.bools["yes"] && !confirm(fmt.Sprintf("Merge %s, %q, into %s? [y/N] ", id, t.head.text("title"), spaceHead.text("base"))) {
@@ -75,39 +80,49 @@ func confirm(question string) bool {
 	return answer == "y" || answer == "yes"
 }
 
-// setFrom is an update that moves a task from one status to another.
-func setFrom(from, to string) func(t *task) error {
-	return func(t *task) error {
-		if status := t.head.text("status"); status != from {
-			return refuse("%s is %s now, not %s", t.id, status, from)
-		}
-		t.head.set("status", to)
-		return nil
+// move moves a task from one status to another, refusing one that has moved on.
+func move(t *task, from, to string) error {
+	if status := t.head.text("status"); status != from {
+		return refuse("%s is %s now, not %s", t.id, status, from)
 	}
+	t.head.set("status", to)
+	return nil
 }
 
-// mergingIn is a task of the space whose pull request is merging, if any.
-func mergingIn(spaceName string) string {
-	tasks, _ := allTasks()
+// mergingIn is a task of the space whose pull request is merging, if any; a
+// task file that will not read could be one, so it refuses.
+func mergingIn(spaceName string) (string, error) {
+	tasks, problems := allTasks()
+	if len(problems) > 0 {
+		return "", fmt.Errorf("%w; fix it before accepting", problems[0])
+	}
 	for _, t := range tasks {
 		if t.space == spaceName && t.head.text("status") == "merging" {
-			return t.id
+			return t.id, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
-// mergeLocal merges a task's branch into the base in the repo's own checkout.
-// It holds the store's lock throughout, so two accepts never merge at once.
-func mergeLocal(t task, spaceHead header) error {
+// mergeLocal merges a task's reviewed commit into the base in the repo's own
+// checkout. It holds the store's lock throughout and checks the task is still
+// ready on that commit, so two accepts never merge it twice.
+func mergeLocal(accepted task, spaceHead header) error {
 	repo := expand(spaceHead.text("folder"))
 	base := spaceHead.text("base")
-	branch := t.head.text("branch")
+	reviewed := accepted.head.text("reviewed_commit")
 	unlock, err := lock()
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	t, err := loadTask(accepted.id)
+	if err != nil {
+		return err
+	}
+	if status := t.head.text("status"); status != "ready" || t.head.text("reviewed_commit") != reviewed {
+		return refuse("%s changed while it was being accepted (now %s); accept it again", t.id, status)
+	}
 	if err := clean(repo); err != nil {
 		return fmt.Errorf("%w; commit or stash them, then accept %s again", err, t.id)
 	}
@@ -119,7 +134,7 @@ func mergeLocal(t task, spaceHead header) error {
 		return refuse("%s is on %s, not %s; check out %s, then accept %s again", tilde(repo), current, base, base, t.id)
 	}
 	message := fmt.Sprintf("Merge %s: %s", t.id, t.head.text("title"))
-	if _, errOut, err := run("git", "-C", repo, "merge", "--no-ff", "-m", message, branch); err != nil {
+	if _, errOut, err := run("git", "-C", repo, "merge", "--no-ff", "-m", message, reviewed); err != nil {
 		conflicts, _ := git("-C", repo, "diff", "--name-only", "--diff-filter=U")
 		_, _, _ = run("git", "-C", repo, "merge", "--abort")
 		if files := strings.Fields(conflicts); len(files) > 0 {
@@ -132,11 +147,9 @@ func mergeLocal(t task, spaceHead header) error {
 	if err != nil {
 		return err
 	}
-	t, err = loadTask(t.id)
-	if err != nil {
+	if err := move(&t, "ready", "done"); err != nil {
 		return err
 	}
-	t.head.set("status", "done")
 	t.head.set("merged", merged)
 	if err := writeText(t.path, render(t.head, t.body)); err != nil {
 		return err
@@ -192,7 +205,7 @@ func openPR(t task, spaceHead header) error {
 		url = lastLine(out)
 	}
 	_, err := update(t.id, func(t *task) error {
-		if err := setFrom("ready", "merging")(t); err != nil {
+		if err := move(t, "ready", "merging"); err != nil {
 			return err
 		}
 		t.head.set("pr", url)
@@ -248,9 +261,11 @@ func followMerge(t task) error {
 	case pr.State == "MERGED":
 		return finishPR(t, repo, pr.MergeCommit.Oid)
 	case pr.State == "CLOSED":
-		return backToReady(t.id, "its pull request was closed")
+		return backToReady(t.id, "its pull request was closed; accept again for a new one")
 	case pr.Mergeable == "CONFLICTING":
-		return backToReady(t.id, "its pull request conflicts with "+spaceHead.text("base"))
+		base := spaceHead.text("base")
+		return backToReady(t.id, "its pull request conflicts with "+base+
+			"; reopen, merge "+base+" into its branch, commit and review again")
 	case pr.MergeStateStatus == "CLEAN":
 		if _, errOut, err := runIn(repo, "gh", "pr", "merge", "--squash", url); err != nil {
 			return refuse("%s: gh pr merge: %s", t.id, reason(errOut, ""))
@@ -262,7 +277,7 @@ func followMerge(t task) error {
 // finishPR marks a task whose pull request merged as done and cleans up after it.
 func finishPR(t task, repo, merged string) error {
 	t, err := update(t.id, func(t *task) error {
-		if err := setFrom("merging", "done")(t); err != nil {
+		if err := move(t, "merging", "done"); err != nil {
 			return err
 		}
 		t.head.set("merged", merged)
@@ -286,7 +301,7 @@ func finishPR(t task, repo, merged string) error {
 // backToReady returns a merging task to ready, saying why in its step.
 func backToReady(id, why string) error {
 	_, err := update(id, func(t *task) error {
-		if err := setFrom("merging", "ready")(t); err != nil {
+		if err := move(t, "merging", "ready"); err != nil {
 			return err
 		}
 		t.head.set("step", why)
@@ -354,7 +369,7 @@ func reopenReady(t task) error {
 		return fmt.Errorf("%w; commit or drop them first", err)
 	}
 	t, err := update(t.id, func(t *task) error {
-		if err := setFrom("ready", "working")(t); err != nil {
+		if err := move(t, "ready", "working"); err != nil {
 			return err
 		}
 		t.head.set("reviewed_commit", nil)
@@ -378,7 +393,7 @@ func reopenDone(t task) error {
 	branch := t.head.text("branch")
 	worktree := t.head.text("worktree")
 	if !exists(expand(worktree)) {
-		if _, _, err := run("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		if branchExists(repo, branch) {
 			if _, err := git("-C", repo, "worktree", "add", expand(worktree), branch); err != nil {
 				return err
 			}
@@ -388,7 +403,7 @@ func reopenDone(t task) error {
 		}
 	}
 	_, err = update(t.id, func(t *task) error {
-		if err := setFrom("done", "todo")(t); err != nil {
+		if err := move(t, "done", "todo"); err != nil {
 			return err
 		}
 		t.head.set("branch", branch)
@@ -401,6 +416,8 @@ func reopenDone(t task) error {
 	}
 	started, err := start(t.id, false)
 	if err != nil {
+		// A launch that fails leaves the task done, as it was.
+		_, _ = update(t.id, func(t *task) error { return move(t, "todo", "done") })
 		return err
 	}
 	fmt.Println(taskLine(started.head))

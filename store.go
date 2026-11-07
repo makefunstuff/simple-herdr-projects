@@ -203,6 +203,12 @@ func parseFile(path string) (header, string, error) {
 	if err != nil {
 		return header{}, "", err
 	}
+	return parseText(path, text)
+}
+
+// parseText reads a header and the Markdown below it from a file's text,
+// naming the file in errors.
+func parseText(path, text string) (header, string, error) {
 	lines := strings.Split(text, "\n")
 	if trimCR(lines[0]) != "---" {
 		return header{}, "", refuse("%s: no header (a first line of ---)", tilde(path))

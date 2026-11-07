@@ -212,7 +212,7 @@ func TestReview(t *testing.T) {
 		f.report(0, 0, 0)
 		f.ok("review", id)
 		f.commit(worktree, "later.txt", "later\n")
-		wantIn(t, f.refused("ready", id), "commits after round 1")
+		wantIn(t, f.refused("ready", id), "round 1 of "+id+" is stale")
 	})
 
 	t.Run("a HEAD moved during the round records no round", func(t *testing.T) {
@@ -428,6 +428,21 @@ func TestAccept(t *testing.T) {
 		wantField(t, f.header(id), "status", "working")
 	})
 
+	t.Run("a commit made during accept is not merged", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work", "--checks", `[["sh", "-c", "echo late > late.txt && git add late.txt && git commit -qm late"]]`)
+		id, worktree := f.readyTask("Search box")
+		reviewed := f.head(worktree)
+		f.ok("accept", id, "--yes")
+		f.gitAt(f.repo, "merge-base", "--is-ancestor", reviewed, "main")
+		if exists(filepath.Join(f.repo, "late.txt")) {
+			t.Error("the unreviewed commit was merged")
+		}
+		if branches := f.gitAt(f.repo, "branch", "--list", fmt.Sprint(f.header(id)["branch"])); branches == "" {
+			t.Error("the branch with the unreviewed commit was deleted")
+		}
+	})
+
 	t.Run("a merge kills the task's terminals", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
@@ -505,8 +520,8 @@ func TestPullRequest(t *testing.T) {
 		step   string
 	}{
 		{"a merged pull request is done", map[string]any{"state": "MERGED", "mergeCommit": map[string]any{"oid": "abc1234"}}, "done", ""},
-		{"a closed pull request is ready again", map[string]any{"state": "CLOSED"}, "ready", "its pull request was closed"},
-		{"a conflicting pull request is ready again", map[string]any{"state": "OPEN", "mergeable": "CONFLICTING"}, "ready", "its pull request conflicts with main"},
+		{"a closed pull request is ready again", map[string]any{"state": "CLOSED"}, "ready", "its pull request was closed; accept again for a new one"},
+		{"a conflicting pull request is ready again", map[string]any{"state": "OPEN", "mergeable": "CONFLICTING"}, "ready", "its pull request conflicts with main; reopen, merge main into its branch, commit and review again"},
 		{"a pending pull request stays merging", map[string]any{"state": "OPEN", "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED"}, "merging", ""},
 	}
 	for _, c := range tick {
@@ -582,7 +597,7 @@ func TestDoneAndReopen(t *testing.T) {
 		head := f.header(id)
 		wantField(t, head, "status", "working")
 		wantField(t, head, "reviewed_commit", nil)
-		wantIn(t, f.refused("ready", id), "commits after round 1")
+		wantIn(t, f.refused("ready", id), "round 1 of "+id+" is stale")
 	})
 
 	t.Run("reopen refuses a ready task with uncommitted changes", func(t *testing.T) {

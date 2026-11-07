@@ -25,9 +25,28 @@ func (n noSlot) Error() string { return string(n) }
 
 // workerTerminal is the live terminal of a task's worker, if any.
 func workerTerminal(id string) (string, error) {
-	found, err := hcJSON("ls", "--label", "herdr.role=worker", "--label", "herdr.task="+id)
+	alive, err := liveTerminals("herdr.role=worker", "herdr.task="+id)
 	if err != nil {
 		return "", err
+	}
+	if len(alive) > 1 {
+		return "", refuse("%s has %d live workers: %s", id, len(alive), strings.Join(alive, ", "))
+	}
+	if len(alive) == 0 {
+		return "", nil
+	}
+	return alive[0], nil
+}
+
+// liveTerminals are the addresses of the live terminals with all these labels.
+func liveTerminals(labels ...string) ([]string, error) {
+	argv := []string{"ls"}
+	for _, label := range labels {
+		argv = append(argv, "--label", label)
+	}
+	found, err := hcJSON(argv...)
+	if err != nil {
+		return nil, err
 	}
 	terminals, _ := found["terminals"].([]any)
 	var alive []string
@@ -37,13 +56,13 @@ func workerTerminal(id string) (string, error) {
 			alive = append(alive, address)
 		}
 	}
-	if len(alive) > 1 {
-		return "", refuse("%s has %d live workers: %s", id, len(alive), strings.Join(alive, ", "))
-	}
-	if len(alive) == 0 {
-		return "", nil
-	}
-	return alive[0], nil
+	return alive, nil
+}
+
+// branchExists reports whether a repo has a local branch.
+func branchExists(repo, branch string) bool {
+	_, _, err := run("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
 }
 
 // workerPrompt is the first message a worker gets.
@@ -110,7 +129,7 @@ func makeWorktree(spaceHead header, t task) error {
 		}
 		return nil
 	}
-	if _, _, err := run("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+	if branchExists(repo, branch) {
 		return refuse("branch %s already exists", branch)
 	}
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
@@ -384,11 +403,12 @@ func tickCmd(raw []string) error {
 	for _, problem := range problems {
 		fmt.Fprintf(os.Stderr, "shp: %v\n", problem)
 	}
+	problems = append(problems, followMerges(tasks)...)
+	tasks, _ = allTasks() // a merge may have cleared a gate
 	byID := map[string]header{}
 	for _, t := range tasks {
 		byID[t.id] = t.head
 	}
-	problems = append(problems, followMerges(tasks)...)
 	var started []string
 	for _, t := range tasks {
 		if t.head.text("status") != "queued" || !gatesClear(t, byID) {

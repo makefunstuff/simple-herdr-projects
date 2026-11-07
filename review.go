@@ -113,31 +113,39 @@ func reviewCmd(raw []string) error {
 	if now != head {
 		return refuse("%s moved from %.7s to %.7s during round %d; no round recorded, review again", id, head, now, round)
 	}
-	return recordRound(id, round, head, report)
+	return recordRound(t, round, head, report)
 }
 
 // awaitReport waits for the reviewer's report however long it takes; it gives
 // up only when the reviewer has ended without writing one.
 func awaitReport(terminal, report string) error {
-	for {
-		if isFile(report) {
+	for !isFile(report) {
+		started := time.Now()
+		err := reviewerWait(terminal, report)
+		if isFile(report) { // written just before the reviewer ended
 			return nil
 		}
-		reply, err := hcJSON("get", terminal)
 		if err != nil {
 			return err
 		}
-		if reply["state"] != "live" {
-			return refuse("the reviewer in %s ended without writing %s; no round recorded", terminal, report)
-		}
-		started := time.Now()
-		if _, err := hcJSON("wait", terminal, "--timeout", "60"); err != nil {
-			return err
-		}
-		if !isFile(report) && time.Since(started) < 5*time.Second {
+		if time.Since(started) < 5*time.Second {
 			time.Sleep(5 * time.Second) // an idle reviewer ends a wait at once
 		}
 	}
+	return nil
+}
+
+// reviewerWait waits once on a reviewer, refusing one that has ended.
+func reviewerWait(terminal, report string) error {
+	reply, err := hcJSON("get", terminal)
+	if err != nil {
+		return err
+	}
+	if reply["state"] != "live" {
+		return refuse("the reviewer in %s ended without writing %s; no round recorded", terminal, report)
+	}
+	_, err = hcJSON("wait", terminal, "--timeout", "60")
+	return err
 }
 
 func reviewedCmd(raw []string) error {
@@ -166,7 +174,7 @@ func reviewedCmd(raw []string) error {
 		return err
 	}
 	done, _ := t.head.number("review")
-	return recordRound(id, done+1, head, expand(report))
+	return recordRound(t, done+1, head, expand(report))
 }
 
 // reviewable refuses a task that has no work under way to review.
@@ -179,7 +187,7 @@ func reviewable(t task) error {
 
 // recordRound copies a report beside its task and records the round's counts
 // and the commit it reviewed.
-func recordRound(id string, round int, head, report string) error {
+func recordRound(t task, round int, head, report string) error {
 	counts, text, err := reportCounts(report)
 	if err != nil {
 		return err
@@ -192,9 +200,8 @@ func recordRound(id string, round int, head, report string) error {
 	for i := range slices.Index(levels, cfg.text("must_fix")) + 1 {
 		blocking += counts[i]
 	}
-	kept := ""
-	_, err = update(id, func(t *task) error {
-		kept = filepath.Join(filepath.Dir(t.path), fmt.Sprintf("%s.review-%d.md", id, round))
+	kept := filepath.Join(filepath.Dir(t.path), fmt.Sprintf("%s.review-%d.md", t.id, round))
+	_, err = update(t.id, func(t *task) error {
 		t.head.set("review", json.Number(strconv.Itoa(round)))
 		t.head.set("reviewed_commit", head)
 		t.head.set("blocking", json.Number(strconv.Itoa(blocking)))
@@ -204,7 +211,7 @@ func recordRound(id string, round int, head, report string) error {
 		return err
 	}
 	fmt.Printf("%s: round %d: %d blocker, %d major, %d minor; %d to fix (%s)\n",
-		id, round, counts[0], counts[1], counts[2], blocking, tilde(kept))
+		t.id, round, counts[0], counts[1], counts[2], blocking, tilde(kept))
 	return nil
 }
 
@@ -216,7 +223,7 @@ func reportCounts(report string) ([]int, string, error) {
 	}
 	noCounts := refuse("%s has no header of blocker, major and minor counts; no round recorded "+
 		"(add one, then shp reviewed --report it)", tilde(report))
-	head, _, err := parseFile(report)
+	head, _, err := parseText(report, text)
 	if err != nil {
 		return nil, "", noCounts
 	}
@@ -239,11 +246,19 @@ func readyCmd(raw []string) error {
 	if len(a.words) != 1 {
 		return usage("ready takes one task id")
 	}
-	t, err := update(a.words[0], func(t *task) error {
+	t, err := loadTask(a.words[0])
+	if err != nil {
+		return err
+	}
+	head, err := gitHead(expand(t.head.text("worktree")))
+	if err != nil {
+		return err
+	}
+	t, err = update(t.id, func(t *task) error {
 		if status := t.head.text("status"); status != "working" {
 			return refuse("%s is %s; only working tasks get ready", t.id, status)
 		}
-		if err := reviewedNow(*t); err != nil {
+		if err := reviewedNow(*t, head); err != nil {
 			return err
 		}
 		t.head.set("status", "ready")
@@ -262,19 +277,15 @@ func readyCmd(raw []string) error {
 	return nil
 }
 
-// reviewedNow refuses a task whose last round is missing, stale or left
-// findings to fix.
-func reviewedNow(t task) error {
+// reviewedNow refuses a task on head whose last round is missing, stale or
+// left findings to fix.
+func reviewedNow(t task, head string) error {
 	round, _ := t.head.number("review")
 	if round == 0 {
 		return refuse("%s has no review round; run shp review %s", t.id, t.id)
 	}
-	head, err := gitHead(expand(t.head.text("worktree")))
-	if err != nil {
-		return err
-	}
 	if head != t.head.text("reviewed_commit") {
-		return refuse("%s has commits after round %d; review again", t.id, round)
+		return refuse("round %d of %s is stale (reopened or new commits); review again", round, t.id)
 	}
 	if blocking, _ := t.head.number("blocking"); blocking > 0 {
 		return refuse("round %d of %s left %d findings to fix; fix them, commit and review again", round, t.id, blocking)
@@ -303,22 +314,16 @@ func clean(dir string) error {
 // killTerminals ends a task's live terminals, those of one role when given;
 // one that will not end is reported and left.
 func killTerminals(id, role string) {
-	labels := []string{"ls", "--label", "herdr.task=" + id}
+	labels := []string{"herdr.task=" + id}
 	if role != "" {
-		labels = append(labels, "--label", "herdr.role="+role)
+		labels = append(labels, "herdr.role="+role)
 	}
-	found, err := hcJSON(labels...)
+	alive, err := liveTerminals(labels...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 		return
 	}
-	terminals, _ := found["terminals"].([]any)
-	for _, item := range terminals {
-		terminal, _ := item.(map[string]any)
-		address, _ := terminal["address"].(string)
-		if terminal["state"] != "live" || address == "" {
-			continue
-		}
+	for _, address := range alive {
 		if _, err := hc("kill", address); err != nil {
 			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 		}
