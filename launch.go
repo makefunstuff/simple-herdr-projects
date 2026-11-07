@@ -314,7 +314,7 @@ func startCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(line(t.head))
+	fmt.Println(taskLine(t.head))
 	return nil
 }
 

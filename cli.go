@@ -98,7 +98,7 @@ func parseArgs(raw, valueFlags, boolFlags []string) (*args, error) {
 	return a, nil
 }
 
-// printJSON prints a header or a list of them, indented like the old CLI.
+// printJSON prints a value as indented JSON.
 func printJSON(value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -266,17 +266,20 @@ const mainHelp = `usage: shp [-h] {config,space,add,list,show,start,tick,status,
 Spaces and tasks for coding agents on Herdr.
 
 positional arguments:
-  config    print the config file
-  space     spaces are git repos
-  add       add a task
-  list      one line per task
-  show      print a task
-  start     make the worktree and start the worker
-  tick      start queued tasks that may run
-  status    a worker reports its progress
-  ask       a worker asks the person
-  say       options:
-  -h, --help  show this help message and exit
+  {config,space,add,list,show,start,tick,status,ask,say}
+    config              print the config file
+    space               spaces are git repos
+    add                 add a task
+    list                one line per task
+    show                print a task
+    start               make the worktree and start the worker
+    tick                start queued tasks that may run
+    status              a worker reports its progress
+    ask                 a worker asks the person
+    say                 send a person's answer to the worker
+
+options:
+  -h, --help            show this help message and exit
 `
 
 const configHelp = `usage: shp config [-h]
@@ -288,7 +291,8 @@ options:
 const spaceHelp = `usage: shp space [-h] {add} ...
 
 positional arguments:
-  add       add a space
+  {add}
+    add       add a space
 
 options:
   -h, --help  show this help message and exit
@@ -325,7 +329,8 @@ options:
   --status {todo,queued}
   --parent PARENT
   --after AFTER
-  --agent AGENT         argv JSON, e.g. ["claude"]; empty runs the config worker
+  --agent AGENT         argv JSON, e.g. ["claude"]; empty runs the config
+                        worker
 `
 
 const listHelp = `usage: shp list [-h] [--json] [--space SPACE]

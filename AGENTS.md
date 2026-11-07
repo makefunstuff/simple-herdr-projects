@@ -8,7 +8,7 @@
 ## Code style
 
 The goal is minimal, elegant code with no unnecessary abstractions.
-- Prefer plain functions and data (dicts, lists, files) to classes, frameworks, plugin systems, registries or config layers.
+- Prefer plain functions and data (maps, slices, files) to classes, frameworks, plugin systems, registries or config layers.
 - No abstraction until it is needed in a second real place. Duplication beats the wrong abstraction.
 - Every line earns its place: delete before you add. A smaller diff that does the job wins.
 - Go's standard library only, unless the design doc says otherwise.

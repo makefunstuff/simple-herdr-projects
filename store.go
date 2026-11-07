@@ -332,9 +332,11 @@ func asStrings(value any) ([]string, bool) {
 	}
 	words := make([]string, len(items))
 	for i, item := range items {
-		if words[i], ok = item.(string); !ok {
+		word, ok := item.(string)
+		if !ok {
 			return nil, false
 		}
+		words[i] = word
 	}
 	return words, true
 }

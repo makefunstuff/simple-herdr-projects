@@ -125,8 +125,8 @@ func taskNumber(id string) int {
 	return n
 }
 
-// line is one row of shp list.
-func line(h header) string {
+// taskLine is one row of shp list.
+func taskLine(h header) string {
 	text := fmt.Sprintf("%s  %s  %s", h.text("id"), h.text("status"), h.text("title"))
 	var tail []string
 	progress, hasProgress := h.number("progress")
@@ -331,7 +331,7 @@ func listCmd(raw []string) error {
 		}
 	} else {
 		for _, t := range shown {
-			fmt.Println(line(t.head))
+			fmt.Println(taskLine(t.head))
 		}
 	}
 	if len(problems) > 0 {
@@ -409,7 +409,7 @@ func reportCmd(raw []string) error {
 	if err := writeText(t.path, render(t.head, t.body)); err != nil {
 		return err
 	}
-	fmt.Println(line(t.head))
+	fmt.Println(taskLine(t.head))
 	return nil
 }
 
@@ -456,7 +456,7 @@ func askCmd(raw []string) error {
 func newAskID() (string, error) {
 	bytes := make([]byte, 3)
 	if _, err := rand.Read(bytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("making an ask id: %w", err)
 	}
 	return hex.EncodeToString(bytes), nil
 }

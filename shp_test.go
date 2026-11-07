@@ -458,6 +458,26 @@ func TestSpace(t *testing.T) {
 	})
 }
 
+func TestHelp(t *testing.T) {
+	f := newFixture(t)
+	commands := []string{"config", "space", "add", "list", "show", "start", "tick", "status", "ask", "say"}
+	help := f.ok("--help")
+	for _, command := range commands {
+		if !strings.Contains(help, "\n    "+command+" ") {
+			t.Errorf("main help lacks %s: %q", command, help)
+		}
+		if got := f.ok(command, "--help"); !strings.Contains(got, "usage: shp "+command) {
+			t.Errorf("%s --help: %q", command, got)
+		}
+	}
+	if got := f.ok("space", "add", "--help"); !strings.Contains(got, "usage: shp space add") {
+		t.Errorf("space add --help: %q", got)
+	}
+	if got := f.shp(""); got.code != 2 || !strings.Contains(got.stderr, "usage: shp") {
+		t.Errorf("no command: exit %d, %q", got.code, got.stderr)
+	}
+}
+
 func TestAdd(t *testing.T) {
 	t.Run("ids are never reused", func(t *testing.T) {
 		f := newFixture(t)
