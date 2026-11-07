@@ -43,6 +43,18 @@ func spaceStartCmd(raw []string) error {
 	return nil
 }
 
+// coordinatorPrompt is the first message a space's Assistant gets. A guide
+// without placeholders is hc's own assistant template; the space's details
+// are appended for it.
+func coordinatorPrompt(name string, head header, path string) string {
+	prompt := guide("assistant", coordinatorGuide)
+	folder := expand(head.text("folder"))
+	if !strings.Contains(prompt, "{{") {
+		prompt += fmt.Sprintf("\nYour space is %s at %s; its file is %s.\n", name, tilde(folder), tilde(path))
+	}
+	return fillGuide(prompt, "{{space}}", name, "{{folder}}", tilde(folder), "{{file}}", tilde(path))
+}
+
 // startCoordinator opens a space's Assistant in its Herdr space, in the
 // Assistant tab, and points it at the space file.
 func startCoordinator(name string) error {
@@ -89,11 +101,7 @@ func startCoordinator(name string) error {
 		}
 		argv = cfg.words("coordinator")
 	}
-	prompt := guide("assistant", coordinatorGuide)
-	if !strings.Contains(prompt, "{{") {
-		prompt += fmt.Sprintf("\nYour space is %s at %s; its file is %s.\n", name, tilde(folder), tilde(path))
-	}
-	prompt = fillGuide(prompt, "{{space}}", name, "{{folder}}", tilde(folder), "{{file}}", tilde(path))
+	prompt := coordinatorPrompt(name, head, path)
 	reply, err := herdrApp("tab.new", map[string]any{
 		"name":   "Assistant",
 		"space":  workspace,
