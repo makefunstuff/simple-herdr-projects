@@ -24,7 +24,7 @@ Needs you only on an explicit ask; silence, idle, blocked or merge trouble never
 
 Worker: `status`, `ask`, `ready`, `review`; coordinator: `add`, `start`, `status`; person: `say`, `review`, `reviewed`, `ready`, `start`, `accept`, `reopen`, `done`, `--again`. `start` starts now; `tick` starts queued work.
 
-`done` drops an open task (not `merging`), kills terminals, keeps branch and worktree. `reopen` from ready keeps them, refuses a dirty tree, clears `reviewed_commit`; from done it reuses worktree/branch if present, else `<branch>-2` from base.
+`done` drops an open task (not `merging`), kills terminals, keeps branch and worktree. `reopen` from ready keeps them, refuses a dirty tree, clears `reviewed_commit`; from done it reuses worktree/branch if present, else `<branch>-2` (or the next free number) from base, passing through `todo` to start its worker.
 
 ## 3. CLI
 
@@ -86,4 +86,4 @@ Six tasks, in order; done is:
 
 - The Review tab keeps its round's report until the next; a slow reviewer is waited for and kept, never failed.
 - A round records its launch HEAD; a later commit makes it stale and `ready` refuses.
-- Reopening a done task reuses its worktree and branch if they exist, else `<branch>-2` from base.
+- Reopening a done task reuses its worktree and branch if they exist, else `<branch>-2` (or the next free number) from base.

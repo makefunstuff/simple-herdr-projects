@@ -81,8 +81,11 @@ func reviewCmd(raw []string) error {
 		return wrap(report, err)
 	}
 
-	// The last round's reviewer stays with its report until this one starts.
-	killTerminals(id, "reviewer")
+	// The last round's reviewer stays with its report until this one is in.
+	previous, err := liveTerminals("herdr.task="+id, "herdr.role=reviewer")
+	if err != nil {
+		return err
+	}
 	prompt := reviewPrompt(t, spaceHead, head, report)
 	payload := map[string]any{"name": "Review", "folder": worktree, "argv": cfg.words("reviewer"), "task": prompt}
 	if workspace := t.head.text("workspace"); workspace != "" {
@@ -102,6 +105,7 @@ func reviewCmd(raw []string) error {
 	if err := deliver(terminal, prompt, id); err != nil {
 		return err
 	}
+	kill(previous)
 	fmt.Printf("%s: round %d is with the reviewer in %s\n", id, round, terminal)
 	if err := awaitReport(terminal, report); err != nil {
 		return err
@@ -203,6 +207,9 @@ func recordRound(t task, round int, head, report string) error {
 	}
 	kept := filepath.Join(filepath.Dir(t.path), fmt.Sprintf("%s.review-%d.md", t.id, round))
 	_, err = update(t.id, func(cur *task) error {
+		if err := reviewable(*cur); err != nil {
+			return err
+		}
 		cur.head.set("review", json.Number(strconv.Itoa(round)))
 		cur.head.set("reviewed_commit", head)
 		cur.head.set("blocking", json.Number(strconv.Itoa(blocking)))
@@ -317,19 +324,19 @@ func clean(dir string, untracked bool) error {
 	return nil
 }
 
-// killTerminals ends a task's live terminals, those of one role when given;
-// one that will not end is reported and left.
-func killTerminals(id, role string) {
-	labels := []string{"herdr.task=" + id}
-	if role != "" {
-		labels = append(labels, "herdr.role="+role)
-	}
-	alive, err := liveTerminals(labels...)
+// killTerminals ends a task's live terminals.
+func killTerminals(id string) {
+	alive, err := liveTerminals("herdr.task=" + id)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 		return
 	}
-	for _, address := range alive {
+	kill(alive)
+}
+
+// kill ends terminals; one that will not end is reported and left.
+func kill(addresses []string) {
+	for _, address := range addresses {
 		if _, err := hc("kill", address); err != nil {
 			fmt.Fprintf(os.Stderr, "shp: %v\n", err)
 		}

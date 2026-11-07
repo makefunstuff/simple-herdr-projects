@@ -444,12 +444,25 @@ func TestAccept(t *testing.T) {
 		f.makeSpace("work", "--checks", `[["sh", "-c", "echo late > late.txt && git add late.txt && git commit -qm late"]]`)
 		id, _ := f.readyTask("Search box")
 		main := f.head(f.repo)
-		wantIn(t, f.refused("accept", id, "--yes"), "got a commit while its checks ran")
+		wantIn(t, f.refused("accept", id, "--yes"), "it is working again")
+		wantField(t, f.header(id), "status", "working")
 		if f.head(f.repo) != main {
 			t.Error("main moved")
 		}
-		wantIn(t, f.refused("accept", id, "--yes"), "it is working again")
-		wantField(t, f.header(id), "status", "working")
+	})
+
+	t.Run("a task dropped during accept is not merged", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work", "--checks", fmt.Sprintf(`[[%q, "done", "WORK-1"]]`, shpBin))
+		id, worktree := f.readyTask("Search box")
+		main := f.head(f.repo)
+		wantIn(t, f.refused("accept", id, "--yes"), "changed while it was being accepted (now done)")
+		if f.head(f.repo) != main {
+			t.Error("main moved")
+		}
+		if !exists(worktree) {
+			t.Error("the worktree went")
+		}
 	})
 
 	t.Run("a merge kills the task's terminals", func(t *testing.T) {
@@ -647,6 +660,20 @@ func TestDoneAndReopen(t *testing.T) {
 		f.ok("reopen", id)
 		if strings.TrimSpace(f.gitAt(worktree, "log", "-1", "--format=%s")) != "change feature.txt" {
 			t.Error("the branch's commit is missing")
+		}
+	})
+
+	t.Run("reopen recovers a done task's worktree deleted by hand", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		id, worktree := f.working("Search box")
+		f.ok("done", id)
+		if err := os.RemoveAll(worktree); err != nil {
+			t.Fatal(err)
+		}
+		f.ok("reopen", id)
+		if !exists(filepath.Join(worktree, "feature.txt")) {
+			t.Error("the branch's work is missing")
 		}
 	})
 

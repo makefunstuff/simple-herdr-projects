@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
+
+// reopenSuffix is the -<n> a reopen adds to a branch and its worktree.
+var reopenSuffix = regexp.MustCompile(`-([2-9]|[1-9][0-9]+)$`)
 
 func acceptCmd(raw []string) error {
 	a, err := parseArgs(raw, nil, []string{"yes"})
@@ -34,11 +38,7 @@ func acceptCmd(raw []string) error {
 		return err
 	}
 	if head != t.head.text("reviewed_commit") {
-		_, err := update(id, func(cur *task) error { return move(cur, "ready", "working") })
-		if err != nil {
-			return err
-		}
-		return refuse("%s has commits after its last review round; it is working again: review, then ready", id)
+		return backToWork(id)
 	}
 	if err := reviewedNow(t, head); err != nil {
 		return err
@@ -66,16 +66,31 @@ func acceptCmd(raw []string) error {
 			return refuse("check %s failed; %s stays ready:\n%s", strings.Join(argv, " "), id, strings.TrimSpace(out+errOut))
 		}
 	}
-	if now, err := gitHead(worktree); err != nil || now != head {
-		if err != nil {
-			return err
-		}
-		return refuse("%s got a commit while its checks ran; accept it again", id)
+	now, err := gitHead(worktree)
+	if err != nil {
+		return err
+	}
+	if now != head {
+		return backToWork(id)
 	}
 	if spaceHead.text("merge") == "pr" {
 		return openPR(t, spaceHead)
 	}
-	return mergeLocal(t, spaceHead)
+	merged, err := mergeLocal(t, spaceHead)
+	if err != nil {
+		return err
+	}
+	cleanUp(merged, expand(spaceHead.text("folder")))
+	return nil
+}
+
+// backToWork returns a ready task with commits after its last round to working.
+func backToWork(id string) error {
+	_, err := update(id, func(cur *task) error { return move(cur, "ready", "working") })
+	if err != nil {
+		return err
+	}
+	return refuse("%s has commits after its last review round; it is working again: review, then ready", id)
 }
 
 // confirm asks a yes or no question on the terminal.
@@ -111,58 +126,56 @@ func mergingIn(spaceName string) (string, error) {
 }
 
 // mergeLocal merges a task's reviewed commit into the base in the repo's own
-// checkout. It holds the store's lock throughout and checks the task is still
-// ready on that commit, so two accepts never merge it twice.
-func mergeLocal(accepted task, spaceHead header) error {
+// checkout and returns the task, done. It holds the store's lock throughout
+// and checks the task is still ready on that commit, so two accepts never
+// merge it twice.
+func mergeLocal(accepted task, spaceHead header) (task, error) {
 	repo := expand(spaceHead.text("folder"))
 	base := spaceHead.text("base")
 	reviewed := accepted.head.text("reviewed_commit")
 	unlock, err := lock()
 	if err != nil {
-		return err
+		return task{}, err
 	}
 	defer unlock()
 	t, err := loadTask(accepted.id)
 	if err != nil {
-		return err
+		return task{}, err
 	}
 	if err := stillAccepted(t, reviewed); err != nil {
-		return err
+		return task{}, err
 	}
 	if err := clean(repo, false); err != nil {
-		return fmt.Errorf("%w; commit or stash them, then accept %s again", err, t.id)
+		return task{}, fmt.Errorf("%w; commit or stash them, then accept %s again", err, t.id)
 	}
 	current, err := git("-C", repo, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return err
+		return task{}, err
 	}
 	if current = strings.TrimSpace(current); current != base {
-		return refuse("%s is on %s, not %s; check out %s, then accept %s again", tilde(repo), current, base, base, t.id)
+		return task{}, refuse("%s is on %s, not %s; check out %s, then accept %s again", tilde(repo), current, base, base, t.id)
 	}
 	message := fmt.Sprintf("Merge %s: %s", t.id, t.head.text("title"))
 	if _, errOut, err := run("git", "-C", repo, "merge", "--no-ff", "-m", message, reviewed); err != nil {
 		conflicts, _ := git("-C", repo, "diff", "--name-only", "--diff-filter=U")
 		_, _, _ = run("git", "-C", repo, "merge", "--abort")
 		if files := strings.Fields(conflicts); len(files) > 0 {
-			return refuse("%s conflicts with %s in %s; it stays ready: merge %s into its branch, commit and review again",
+			return task{}, refuse("%s conflicts with %s in %s; it stays ready: merge %s into its branch, commit and review again",
 				t.id, base, strings.Join(files, ", "), base)
 		}
-		return refuse("git merge: %s; %s stays ready", reason(errOut, ""), t.id)
+		return task{}, refuse("git merge: %s; %s stays ready", reason(errOut, ""), t.id)
 	}
 	merged, err := gitHead(repo)
 	if err != nil {
-		return err
+		return task{}, err
 	}
-	if err := move(&t, "ready", "done"); err != nil {
-		return err
-	}
+	t.head.set("status", "done")
 	t.head.set("merged", merged)
 	if err := writeText(t.path, render(t.head, t.body)); err != nil {
-		return err
+		return task{}, err
 	}
 	fmt.Printf("%s: merged into %s as %.7s\n", t.id, base, merged)
-	cleanUp(t, repo)
-	return nil
+	return t, nil
 }
 
 // stillAccepted refuses a task that was reopened or reviewed again while it
@@ -187,7 +200,7 @@ func cleanUp(t task, repo string) {
 		strings.TrimSpace(head) == t.head.text("reviewed_commit") {
 		deleteFlag = "-D"
 	}
-	killTerminals(t.id, "")
+	killTerminals(t.id)
 	worktree := expand(t.head.text("worktree"))
 	if exists(worktree) {
 		if _, err := git("-C", repo, "worktree", "remove", worktree); err != nil {
@@ -356,7 +369,7 @@ func doneCmd(raw []string) error {
 	if err != nil {
 		return err
 	}
-	killTerminals(id, "")
+	killTerminals(id)
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
 	return nil
 }
@@ -414,6 +427,8 @@ func reopenDone(t task) error {
 	branch := t.head.text("branch")
 	worktree := t.head.text("worktree")
 	if !exists(expand(worktree)) {
+		// A worktree folder deleted by hand is still registered until pruned.
+		_, _, _ = run("git", "-C", repo, "worktree", "prune")
 		if branchExists(repo, branch) {
 			if _, err := git("-C", repo, "worktree", "add", expand(worktree), branch); err != nil {
 				return err
@@ -444,10 +459,14 @@ func reopenDone(t task) error {
 	return nil
 }
 
-// freshPlace is a new branch and worktree for a task whose own are gone:
-// its first ones with -2, or the next number that is free.
+// freshPlace is a new branch and worktree for a task whose own are gone: its
+// branch with -2, or the next number that is free. A trailing -<n> on the
+// branch is taken as an earlier reopen's and replaced, so suffixes never stack.
 func freshPlace(repo string, t task) (string, string) {
-	stem, place := taskPlace(t.space, t.id, t.head.text("title"))
+	stem, place := t.head.text("branch"), t.head.text("worktree")
+	if m := reopenSuffix.FindString(stem); m != "" && strings.HasSuffix(place, m) {
+		stem, place = strings.TrimSuffix(stem, m), strings.TrimSuffix(place, m)
+	}
 	for n := 2; ; n++ {
 		branch, worktree := fmt.Sprintf("%s-%d", stem, n), fmt.Sprintf("%s-%d", place, n)
 		if !branchExists(repo, branch) && !exists(expand(worktree)) {
