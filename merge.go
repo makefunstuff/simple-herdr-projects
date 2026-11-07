@@ -187,9 +187,12 @@ func stillAccepted(t task, reviewed string) error {
 	return nil
 }
 
-// cleanUp closes a merged task's space and removes its worktree and branch;
-// whatever will not go is kept and named.
+// cleanUp ends a merged task's terminals, removes its worktree and branch,
+// then closes its space; whatever will not go is kept and named. The space
+// goes last: an accept run from its Terminal tab ends with it.
 func cleanUp(t task, repo string) {
+	killTerminals(t.id)
+	defer closeSpace(t)
 	// A branch on just the reviewed commit is merged, even by a squash git
 	// cannot see; one with newer commits goes only if git agrees.
 	deleteFlag := "-d"
@@ -197,7 +200,6 @@ func cleanUp(t task, repo string) {
 		strings.TrimSpace(head) == t.head.text("reviewed_commit") {
 		deleteFlag = "-D"
 	}
-	closeWorkspace(t)
 	worktree := expand(t.head.text("worktree"))
 	if exists(worktree) {
 		if _, err := git("-C", repo, "worktree", "remove", worktree); err != nil {
@@ -372,8 +374,9 @@ func doneCmd(raw []string) error {
 		return err
 	}
 	// Printed first: closing the space may end the shell this runs in.
+	killTerminals(id)
 	fmt.Printf("%s: done; its branch and worktree are kept\n", id)
-	closeWorkspace(t)
+	closeSpace(t)
 	return nil
 }
 

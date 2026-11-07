@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -122,9 +123,10 @@ func TestTaskTabs(t *testing.T) {
 		launch := f.launch()
 		wantField(t, launch, "folder", worktree)
 		wantField(t, launch, "tab", "Chat")
-		calls := f.calls("app.log")
-		if repo := f.appCalls("space.new")[0]; repo["folder"] != f.repo || !isLaunch(calls[len(calls)-4]) {
-			t.Errorf("the repo's space is not made before the launch: %v", calls)
+		repo := f.order("herdr-app", "do", "space.new", fmt.Sprintf(`{"folder":%q,"name":"work"}`, f.repo))
+		launched := slices.IndexFunc(f.calls("all.log"), func(call []string) bool { return isLaunch(call[1:]) })
+		if repo < 0 || repo > launched {
+			t.Errorf("the repo's space at %d, the launch at %d: %v", repo, launched, f.calls("all.log"))
 		}
 		tabs := f.appCalls("tab.new")
 		if got := f.tabNames(); !slices.Equal(got, []string{"Terminal", "Files", "Changes"}) {
@@ -135,6 +137,7 @@ func TestTaskTabs(t *testing.T) {
 			wantField(t, tabs[i], "space", "sp-test")
 			wantField(t, tabs[i], "mod", mod)
 		}
+		wantField(t, tabs[1], "props", map[string]any{"folder": worktree})
 	})
 
 	t.Run("a missing mod is a shell tab", func(t *testing.T) {
@@ -220,7 +223,7 @@ func TestRemoval(t *testing.T) {
 		}
 	})
 
-	t.Run("accept closes the space before the worktree goes", func(t *testing.T) {
+	t.Run("accept kills terminals, removes the worktree and branch, then closes the space", func(t *testing.T) {
 		f := newFixture(t)
 		f.makeSpace("work")
 		id, worktree := f.readyTask("Search box")
@@ -231,6 +234,12 @@ func TestRemoval(t *testing.T) {
 		closed := f.order("herdr-app", "do", "space.close", `{"confirmed":true,"id":"sp-test"}`)
 		if killed < 0 || closed < killed {
 			t.Errorf("kill at %d, close at %d: %v", killed, closed, f.calls("all.log"))
+		}
+		if exists(filepath.Join(f.state, "closed_on_its_folder")) {
+			t.Error("the space closed while its worktree was still there")
+		}
+		if strings.TrimSpace(f.gitAt(f.repo, "branch", "--list", fmt.Sprint(f.header(id)["branch"]))) != "" {
+			t.Error("the branch is still there")
 		}
 		if exists(worktree) {
 			t.Error("the worktree is still there")

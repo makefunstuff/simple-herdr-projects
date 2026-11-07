@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 )
 
-// herdrSpace is a space as herdr-app ls lists it; Machine is nil on this computer.
+// herdrSpace is a space as herdr-app ls lists it; Machine is empty on this computer.
 type herdrSpace struct {
 	ID      string
 	Folder  string
-	Machine *string
+	Machine string
 	Tabs    []struct{ Name string }
 }
 
@@ -59,7 +59,7 @@ func repoSpace(name, repo string) (string, error) {
 		return "", err
 	}
 	for _, s := range listed {
-		if s.Machine != nil || s.Folder == "" {
+		if s.Machine != "" || s.Folder == "" {
 			continue
 		}
 		if folder, err := resolveDir(s.Folder); err == nil && folder == repo {
@@ -83,6 +83,7 @@ func openTab(workspace, worktree, name, mod string) error {
 	payload := map[string]any{"name": name, "space": workspace}
 	if mod != "" && isFile(filepath.Join(appHome(), "mods", mod, "main.js")) {
 		payload["mod"] = mod
+		payload["props"] = map[string]any{"folder": worktree} // px-pr shows this folder's pull request
 	} else {
 		payload["folder"] = worktree
 	}
@@ -126,12 +127,11 @@ func openPRTab(t task) error {
 	return openTab(workspace, expand(t.head.text("worktree")), "PR", "px-pr")
 }
 
-// closeWorkspace ends a task's terminals, then closes the Herdr space the task
-// was given if it is still open. The kill comes first, so no live task
-// terminal holds the space while it goes; closing ends whatever else runs in
-// it. Only that one space goes: the repo's and those made by hand stay.
-func closeWorkspace(t task) {
-	killTerminals(t.id)
+// closeSpace closes the Herdr space a task was given, if it is still open,
+// ending whatever runs in it. Only that one space goes: the repo's and those
+// made by hand stay. Callers kill the task's terminals first, so no live task
+// terminal holds the space while it goes.
+func closeSpace(t task) {
 	workspace := t.head.text("workspace")
 	if workspace == "" {
 		return

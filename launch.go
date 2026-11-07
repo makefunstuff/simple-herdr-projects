@@ -307,8 +307,9 @@ func launch(spaceHead header, t task) (string, error) {
 		}
 		argv = cfg.words("worker") // config refuses an empty worker
 	}
-	if t.head.text("workspace") != "" {
-		closeWorkspace(t) // a restarted task's old space would be left behind
+	if t.head.text("workspace") != "" { // a restarted task's old space would be left behind
+		killTerminals(t.id)
+		closeSpace(t)
 	}
 	prompt := workerPrompt(t)
 	reply, err := herdrApp("space.new", map[string]any{

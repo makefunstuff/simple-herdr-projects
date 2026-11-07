@@ -170,10 +170,27 @@ func fakeApp(state string, args []string) int {
 		fmt.Println(`{"space": "sp-test", "tab": "tb-test", "terminal": "t9"}`)
 	case args[1] == "space.new":
 		fmt.Println(`{"space": "sp-repo", "tab": "tb-repo", "terminal": "t1"}`)
+	case args[1] == "space.close":
+		fakeClose(state, args[2])
+		fmt.Println("{}")
 	default:
 		fmt.Println("{}")
 	}
 	return 0
+}
+
+// fakeClose notes a space closed while its folder was still there.
+func fakeClose(state, payload string) {
+	var closing struct{ ID string }
+	_ = json.Unmarshal([]byte(payload), &closing)
+	listed, _ := fact(state, "spaces.json").(map[string]any)
+	spaces, _ := listed["spaces"].([]any)
+	for _, item := range spaces {
+		space, _ := item.(map[string]any)
+		if folder, _ := space["folder"].(string); space["id"] == closing.ID && exists(folder) {
+			_ = os.WriteFile(filepath.Join(state, "closed_on_its_folder"), nil, 0o644)
+		}
+	}
 }
 
 // fixture is a throwaway HOME, store, git repo and PATH for one test.
