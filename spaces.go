@@ -77,7 +77,6 @@ func loadSpace(name string) (string, header, string, error) {
 	return path, head, body, nil
 }
 
-// oneSpace is the space to use when the command did not name one.
 // needRepo refuses a space that is not a git repo: it has no base branch.
 func needRepo(name string, head header) error {
 	if head.text("base") == "" {
@@ -86,6 +85,7 @@ func needRepo(name string, head header) error {
 	return nil
 }
 
+// oneSpace is the space to use when the command did not name one.
 func oneSpace() (string, error) {
 	found, err := spaces()
 	if err != nil {

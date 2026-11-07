@@ -4,6 +4,7 @@ Read the space file %[3]s: its body is the space's brief.
 How the work runs:
 - Turn what the person asks for into tasks with: shp add "<title>" --space %[1]s --brief <file>
 - Start a task with: shp start <id>. It gets a git worktree, a branch and a worker in its own Herdr workspace.
+- A space that is a folder rather than a git repo has no base: its tasks are notes and cannot start.
 - The queue starts waiting tasks itself; shp tick starts what may run now.
 - Watch with: shp list --space %[1]s and read a task with shp show <id>.
 - When a worker asks you something, the person answers in the task's chat; you can pass an answer with shp say <id> "<answer>".

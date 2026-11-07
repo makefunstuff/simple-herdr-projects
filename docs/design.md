@@ -8,7 +8,7 @@ Files in `~/.herdr/simple/`: `config.md`, `spaces/work.md`, `spaces/work/APP-1.m
 
 Config: role argv, `must_fix: major`, `rounds: 3`, `max_running: 4`.
 
-Space `spaces/<name>.md`: `folder`, `prefix`, `base`, `merge` (local/pr), `checks` (argv), `next`; optional `herdr_space`, `coordinator` (e.g. `{"argv": ["pi"], "tab": "Assistant"}`). Prefix (2–5 initials) stored once, digit if taken; import keeps or appends. The body is the brief.
+Space `spaces/<name>.md`: `folder`, `prefix`, `base`, `merge` (local/pr), `checks` (argv), `next`; optional `herdr_space`, `coordinator` (an argv list, e.g. `["pi"]`). A space that is a folder rather than a git repo has no `base`. Prefix (2–5 initials) stored once, digit if taken; import keeps or appends. The body is the brief.
 
 A task's header: `id`, `title`, `status`, `agent` (worker argv, empty = config), `branch`, `worktree`; `parent`/`after`, `review`/`reviewed_commit`/`blocking`, `asks`, optional `summary`/`proof` (ready; proof is a Herdr artifact id), `pr`/`merged` (accept), `progress`, `step`, `left`, `workspace`, `imported_key`; an ask is id, text, time. The Markdown below is the brief.
 
