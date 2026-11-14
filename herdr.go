@@ -12,7 +12,10 @@ type herdrSpace struct {
 	ID      string
 	Folder  string
 	Machine string
-	Tabs    []struct{ Name string }
+	Tabs    []struct {
+		Name      string
+		Terminals []struct{}
+	}
 }
 
 // taskTabs are the tabs a task's space gets after Chat. The mods follow the
@@ -142,4 +145,74 @@ func closeSpace(id, workspace string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "shp: %v; %s's space %s may still be open\n", err, id, workspace)
 	}
+}
+
+// closeDoneSpaces closes the spaces done tasks left open and returns their
+// tasks' ids: herdr-app can answer a close with ok and keep the space, and a
+// task imported without a space id never had one closed. A space is a task's
+// by its recorded id or, with none recorded, by its folder being the task's
+// worktree; only then can one made by hand at that worktree go too. The
+// repo's space stays, a worktree never being the checkout, and so does any
+// space with a live terminal.
+func closeDoneSpaces(tasks []task) []string {
+	var done []task
+	for _, t := range tasks {
+		if t.head.text("status") == "done" {
+			done = append(done, t)
+		}
+	}
+	if len(done) == 0 {
+		return nil
+	}
+	listed, err := herdrSpaces()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "shp: %v; done tasks' spaces may still be open\n", err)
+		return nil
+	}
+	var closed []string
+	for _, s := range listed {
+		if s.Machine != "" || hasTerminal(s) {
+			continue
+		}
+		for _, t := range done {
+			if !ownsSpace(t, s) {
+				continue
+			}
+			if _, err := herdrApp("space.close", map[string]any{"id": s.ID, "confirmed": true}); err != nil {
+				fmt.Fprintf(os.Stderr, "shp: %v; %s's space %s may still be open\n", err, t.id, s.ID)
+			} else {
+				closed = append(closed, t.id) // as herdr-app answered: a space it kept shows again next tick
+			}
+			break
+		}
+	}
+	return closed
+}
+
+// hasTerminal reports whether a space still shows a terminal in any tab.
+func hasTerminal(s herdrSpace) bool {
+	for _, tab := range s.Tabs {
+		if len(tab.Terminals) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ownsSpace reports whether a space is a task's own: the one recorded for
+// it or, when none is, the one at its worktree.
+func ownsSpace(t task, s herdrSpace) bool {
+	if workspace := t.head.text("workspace"); workspace != "" {
+		return s.ID == workspace
+	}
+	worktree := t.head.text("worktree")
+	if worktree == "" || s.Folder == "" {
+		return false
+	}
+	folder, err := resolveDir(s.Folder)
+	if err != nil {
+		return false
+	}
+	own, err := resolveDir(worktree)
+	return err == nil && folder == own
 }

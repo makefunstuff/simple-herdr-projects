@@ -297,3 +297,68 @@ func TestRemoval(t *testing.T) {
 		}
 	})
 }
+
+// liveSpaceAt is a space whose only tab still shows a terminal.
+func liveSpaceAt(id, folder string) map[string]any {
+	space := herdrSpaceAt(id, folder, "Terminal")
+	space["tabs"].([]any)[0].(map[string]any)["terminals"] = []any{map[string]any{"terminal": "t7"}}
+	return space
+}
+
+func TestTickClosesDoneSpaces(t *testing.T) {
+	closedIDs := func(f *fixture) []string {
+		var ids []string
+		for _, payload := range f.appCalls("space.close") {
+			ids = append(ids, payload["id"].(string))
+		}
+		return ids
+	}
+
+	t.Run("closes the space a done task left open, by its recorded id", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		id, worktree := f.working("Search box")
+		f.setStatus(id, "done")
+		remote := herdrSpaceAt("sp-test", worktree, "Files")
+		remote["machine"] = "machine-a"
+		f.openSpaces(herdrSpaceAt("sp-repo", f.repo), herdrSpaceAt("sp-hand", worktree), remote,
+			herdrSpaceAt("sp-test", worktree, "Files", "Changes"))
+		before := len(f.calls("app.log"))
+		wantIn(t, f.ok("tick"), id+": closing the space it left open")
+		want := [][]string{{"ls"}, {"do", "space.close", `{"confirmed":true,"id":"sp-test"}`}}
+		if got := f.calls("app.log")[before:]; !slices.EqualFunc(got, want, slices.Equal[[]string]) {
+			t.Errorf("tick called herdr-app with %v", got)
+		}
+	})
+
+	t.Run("closes the space at the worktree of a done task with no recorded id", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		id, worktree := f.working("Search box")
+		f.setStatus(id, "done")
+		f.setWorkspace(id, "null")
+		f.gitAt(f.repo, "worktree", "remove", "--force", worktree) // an accepted task's is gone
+		f.openSpaces(herdrSpaceAt("sp-repo", f.repo), herdrSpaceAt("sp-imported", worktree, "Files"))
+		f.ok("tick")
+		if got := closedIDs(f); !slices.Equal(got, []string{"sp-imported"}) {
+			t.Errorf("closed %v", got)
+		}
+	})
+
+	t.Run("leaves a done task's space with a live terminal and an open task's space", func(t *testing.T) {
+		f := newFixture(t)
+		f.makeSpace("work")
+		done, doneTree := f.working("Search box")
+		f.setStatus(done, "done")
+		_, openTree := f.working("Sort order")
+		f.setWorkspace(done, "sp-live")
+		f.openSpaces(herdrSpaceAt("sp-repo", f.repo), liveSpaceAt("sp-live", doneTree), herdrSpaceAt("sp-test", openTree, "Files"))
+		got := f.shp("", "tick")
+		if got.code != 0 || got.stdout != "" {
+			t.Errorf("exit %d: %s%s", got.code, got.stdout, got.stderr)
+		}
+		if closes := closedIDs(f); len(closes) != 0 {
+			t.Errorf("closed %v", closes)
+		}
+	})
+}
