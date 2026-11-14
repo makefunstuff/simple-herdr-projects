@@ -309,7 +309,7 @@ positional arguments:
     list                one line per task
     show                print a task
     start               make the worktree and start the worker
-    tick                start queued tasks that may run
+    tick                start queued tasks, follow merges, close done tasks' spaces
     status              a worker reports its progress
     ask                 a worker asks the person
     say                 send a person's answer to the worker

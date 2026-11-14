@@ -152,7 +152,8 @@ func closeSpace(id, workspace string) {
 // task imported without a space id never had one closed. A space is a task's
 // by its recorded id or, with none recorded, by its folder being the task's
 // worktree; only then can one made by hand at that worktree go too. The
-// repo's space and any with a live terminal stay.
+// repo's space stays, a worktree never being the checkout, and so does any
+// space with a live terminal.
 func closeDoneSpaces(tasks []task) []string {
 	var done []task
 	for _, t := range tasks {
