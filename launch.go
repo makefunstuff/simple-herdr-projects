@@ -416,7 +416,7 @@ func tickCmd(raw []string) error {
 	problems = append(problems, followMerges(tasks)...)
 	tasks, _ = allTasks() // a merge may have cleared a gate
 	for _, id := range closeDoneSpaces(tasks) {
-		fmt.Printf("%s: closed the space it left open\n", id)
+		fmt.Printf("%s: closing the space it left open\n", id)
 	}
 	byID := map[string]header{}
 	for _, t := range tasks {

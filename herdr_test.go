@@ -319,10 +319,12 @@ func TestTickClosesDoneSpaces(t *testing.T) {
 		f.makeSpace("work")
 		id, worktree := f.working("Search box")
 		f.setStatus(id, "done")
-		f.openSpaces(herdrSpaceAt("sp-repo", f.repo), herdrSpaceAt("sp-hand", worktree),
+		remote := herdrSpaceAt("sp-test", worktree, "Files")
+		remote["machine"] = "machine-a"
+		f.openSpaces(herdrSpaceAt("sp-repo", f.repo), herdrSpaceAt("sp-hand", worktree), remote,
 			herdrSpaceAt("sp-test", worktree, "Files", "Changes"))
 		before := len(f.calls("app.log"))
-		wantIn(t, f.ok("tick"), id+": closed the space it left open")
+		wantIn(t, f.ok("tick"), id+": closing the space it left open")
 		want := [][]string{{"ls"}, {"do", "space.close", `{"confirmed":true,"id":"sp-test"}`}}
 		if got := f.calls("app.log")[before:]; !slices.EqualFunc(got, want, slices.Equal[[]string]) {
 			t.Errorf("tick called herdr-app with %v", got)
@@ -335,6 +337,7 @@ func TestTickClosesDoneSpaces(t *testing.T) {
 		id, worktree := f.working("Search box")
 		f.setStatus(id, "done")
 		f.setWorkspace(id, "null")
+		f.gitAt(f.repo, "worktree", "remove", "--force", worktree) // an accepted task's is gone
 		f.openSpaces(herdrSpaceAt("sp-repo", f.repo), herdrSpaceAt("sp-imported", worktree, "Files"))
 		f.ok("tick")
 		if got := closedIDs(f); !slices.Equal(got, []string{"sp-imported"}) {

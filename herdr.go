@@ -14,7 +14,7 @@ type herdrSpace struct {
 	Machine string
 	Tabs    []struct {
 		Name      string
-		Terminals []struct{ Terminal string }
+		Terminals []struct{}
 	}
 }
 
@@ -151,8 +151,8 @@ func closeSpace(id, workspace string) {
 // tasks' ids: herdr-app can answer a close with ok and keep the space, and a
 // task imported without a space id never had one closed. A space is a task's
 // by its recorded id or, with none recorded, by its folder being the task's
-// worktree. The repo's space, those made by hand and any with a live terminal
-// stay.
+// worktree; only then can one made by hand at that worktree go too. The
+// repo's space and any with a live terminal stay.
 func closeDoneSpaces(tasks []task) []string {
 	var done []task
 	for _, t := range tasks {
@@ -180,7 +180,7 @@ func closeDoneSpaces(tasks []task) []string {
 			if _, err := herdrApp("space.close", map[string]any{"id": s.ID, "confirmed": true}); err != nil {
 				fmt.Fprintf(os.Stderr, "shp: %v; %s's space %s may still be open\n", err, t.id, s.ID)
 			} else {
-				closed = append(closed, t.id)
+				closed = append(closed, t.id) // as herdr-app answered: a space it kept shows again next tick
 			}
 			break
 		}
